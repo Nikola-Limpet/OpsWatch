@@ -1,5 +1,7 @@
 # OpsWatch
 
+![OpsWatch: a friendly robot watches service health beside a laptop and servers. Production monitoring. AI-assisted repairs.](assets/readme/opswatch-banner.png)
+
 [![CI](https://github.com/Nikola-Limpet/OpsWatch/actions/workflows/ci.yml/badge.svg)](https://github.com/Nikola-Limpet/OpsWatch/actions/workflows/ci.yml)
 
 A personal workspace for watching production applications and supervising AI-assisted repairs.

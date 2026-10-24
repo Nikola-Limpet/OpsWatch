@@ -18,6 +18,10 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from .studio_protocol import READ_ACTIONS, validate_action
+
+READ_RESULT_RETENTION = 600
+
 
 class RelayError(Exception):
     def __init__(self, status: int, message: str):
@@ -38,9 +42,25 @@ def expire(commands: list[dict], now: float):
     for command in commands:
         if command["state"] in {"pending", "running"} and command["expires_at"] <= now:
             command.update(state="expired", error="Command expired before completion.")
+    # Studio history is durable locally. Relay read results are temporary transport
+    # pages; mutation receipts remain available for idempotency without a time limit.
+    commands[:] = [
+        command
+        for command in commands
+        if not (
+            command["kind"] == "studio"
+            and command["payload"].get("action") in READ_ACTIONS
+            and command["state"] not in {"pending", "running"}
+            and command["expires_at"] + READ_RESULT_RETENTION <= now
+        )
+    ]
 
 
 def validate_target(snapshot: dict, kind: str, target: str):
+    if kind == "studio":
+        if target != "workspace":
+            raise RelayError(404, "Agent workspace not found.")
+        return
     if kind == "fix":
         incidents = snapshot.get("incidents", []) + snapshot.get("repair_incidents", [])
         incident = next((i for i in incidents if i.get("ref") == target), None)
@@ -98,20 +118,42 @@ class PostgresRelay:
                     target text PRIMARY KEY, data bytea NOT NULL, content_type text NOT NULL
                 )
             """)
+            db.execute("""
+                CREATE INDEX IF NOT EXISTS opswatch_relay_active_commands
+                ON opswatch_relay_commands(sequence)
+                WHERE document->>'state' IN ('pending','running')
+            """)
+            db.execute("""
+                CREATE INDEX IF NOT EXISTS opswatch_relay_terminal_commands
+                ON opswatch_relay_commands((document->>'kind'),(document#>>'{payload,action}'))
+                WHERE document->>'state' NOT IN ('pending','running')
+            """)
 
     @contextmanager
-    def _transaction(self):
+    def _transaction(self, identities=()):
         with self._connect() as db:
             row = db.execute("SELECT * FROM opswatch_relay_state WHERE id=1 FOR UPDATE").fetchone()
             if not row:
                 raise RuntimeError("Relay schema is not initialized")
+            db.execute(
+                "DELETE FROM opswatch_relay_commands WHERE document->>'kind'='studio' "
+                "AND document#>>'{payload,action}'=ANY(%s::text[]) "
+                "AND document->>'state' NOT IN ('pending','running') "
+                "AND (document->>'expires_at')::double precision<=%s",
+                (sorted(READ_ACTIONS), self.clock() - READ_RESULT_RETENTION),
+            )
             data = RelayData(
                 snapshot=row["snapshot"],
                 last_seen=row["last_seen"],
                 published_at=row["published_at"],
                 commands=[
                     row["document"]
-                    for row in db.execute("SELECT document FROM opswatch_relay_commands ORDER BY sequence")
+                    for row in db.execute(
+                        "SELECT document FROM opswatch_relay_commands "
+                        "WHERE document->>'state' IN ('pending','running') OR id=ANY(%s::uuid[]) "
+                        "ORDER BY sequence",
+                        (list(identities),),
+                    )
                 ],
             )
             before = copy.deepcopy(data)
@@ -126,6 +168,9 @@ class PostgresRelay:
                     (Jsonb(data.snapshot), data.last_seen, data.published_at),
                 )
             old_commands = {c["id"]: c for c in before.commands}
+            removed = old_commands.keys() - {c["id"] for c in data.commands}
+            if removed:
+                db.execute("DELETE FROM opswatch_relay_commands WHERE id=ANY(%s::uuid[])", (list(removed),))
             for command in data.commands:
                 if command != old_commands.get(command["id"]):
                     db.execute(
@@ -160,24 +205,34 @@ class PostgresRelay:
             return (bytes(row["data"]), row["content_type"]) if row else None
 
     def enqueue(self, kind: str, target: str, payload: dict, request_id: str | None = None):
-        if kind not in {"fix", "services", "projects"}:
+        if kind not in {"fix", "services", "projects", "studio"}:
             raise RelayError(400, "Unknown command kind.")
-        if (kind == "fix" and payload != {}) or (
+        if kind == "studio":
+            try:
+                if not isinstance(payload, dict) or set(payload) != {"action", "payload"}:
+                    raise ValueError
+                payload = {
+                    "action": payload["action"],
+                    "payload": validate_action(payload["action"], payload["payload"]),
+                }
+            except (ValueError, TypeError) as error:
+                raise RelayError(400, "Invalid agent workspace action.") from error
+        elif (kind == "fix" and payload != {}) or (
             kind != "fix" and (set(payload) != {"enabled"} or type(payload["enabled"]) is not bool)
         ):
             raise RelayError(400, "Invalid command payload.")
-        with self._transaction() as data:
-            command_id = request_id or str(uuid4())
+        command_id = request_id or str(uuid4())
+        with self._transaction([command_id]) as data:
+            now = self.clock()
+            expire(data.commands, now)
             existing = next((c for c in data.commands if c["id"] == command_id), None)
             if existing:
                 if (existing["kind"], existing["target"], existing["payload"]) != (kind, target, payload):
                     raise RelayError(409, "Request ID is already used by another action.")
                 return command_id
-            now = self.clock()
             if not data.snapshot or now - min(data.last_seen, data.published_at) > 60:
                 raise RelayError(503, "The local bridge is offline. Try again when it reconnects.")
             validate_target(data.snapshot, kind, target)
-            expire(data.commands, now)
             if sum(c["state"] in {"pending", "running"} for c in data.commands) >= 100:
                 raise RelayError(429, "The command queue is full. Try again shortly.")
             data.commands.append(
@@ -196,13 +251,13 @@ class PostgresRelay:
             return command_id
 
     def command(self, identity: str):
-        with self._transaction() as data:
+        with self._transaction([identity]) as data:
             expire(data.commands, self.clock())
             command = next((c for c in data.commands if c["id"] == identity), None)
             return {key: command[key] for key in ("id", "state", "result", "error")} if command else None
 
     def sync(self, payload: dict):
-        with self._transaction() as data:
+        with self._transaction([result["id"] for result in payload.get("results", [])]) as data:
             now = self.clock()
             data.last_seen = now
             if "snapshot" in payload:

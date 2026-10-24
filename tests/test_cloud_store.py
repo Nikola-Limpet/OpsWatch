@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 
-from opswatch.cloud_store import PostgresRelay, RelayData, RelayError
+from opswatch.cloud_store import READ_RESULT_RETENTION, PostgresRelay, RelayData, RelayError
 
 SNAPSHOT = {
     "generated_at": 1000,
@@ -39,7 +39,7 @@ class MemoryRelay(PostgresRelay):
         self.clock = clock or (lambda: self.now)
 
     @contextmanager
-    def _transaction(self):
+    def _transaction(self, identities=()):
         with self.lock:
             data = copy.deepcopy(self.data)
             yield data
@@ -107,6 +107,38 @@ def test_idempotency_key_returns_original_command_and_rejects_reuse(store):
         store.enqueue("services", "api", {"enabled": False}, key)
     assert error.value.status == 409
     assert len(store.data.commands) == 1
+
+
+def test_ephemeral_read_results_expire_without_losing_mutation_idempotency(store):
+    mutation = store.enqueue("services", "api", {"enabled": False})
+    store.sync({})
+    store.sync({"results": [{"id": mutation, "result": {"enabled": False}, "error": None}]})
+    reads = []
+    for _ in range(25):
+        identity = store.enqueue(
+            "studio", "workspace", {"action": "session_read", "payload": {"session_id": str(uuid4())}}
+        )
+        store.sync({})
+        store.sync({"results": [{"id": identity, "result": {"messages": ["x" * 59000]}, "error": None}]})
+        reads.append(identity)
+    assert store.command(reads[-1])["state"] == "done"
+    store.now += 120 + READ_RESULT_RETENTION + 1
+    store.sync({"snapshot": copy.deepcopy(SNAPSHOT)})
+    assert store.command(reads[-1]) is None
+    assert [item["id"] for item in store.data.commands] == [mutation]
+    assert store.enqueue("services", "api", {"enabled": False}, mutation) == mutation
+    assert store.command(mutation)["result"] == {"enabled": False}
+
+
+def test_active_reads_are_expired_then_retained_for_browser_recovery(store):
+    identity = store.enqueue(
+        "studio", "workspace", {"action": "collection_read", "payload": {"collection": "sessions"}}
+    )
+    store.sync({})
+    store.now += 121
+    assert store.command(identity)["state"] == "expired"
+    store.now += READ_RESULT_RETENTION + 1
+    assert store.command(identity) is None
 
 
 def test_bridge_must_be_online_and_targets_must_be_published(store):
@@ -196,6 +228,21 @@ def test_postgres_durability_ordered_leases_expiry_and_idempotent_results(postgr
     other.clock = lambda: 1120.0
     assert other.sync({})["command"] is None
     assert other.command(second)["state"] == "expired"
+
+
+def test_postgres_prunes_a_pending_read_after_a_long_idle_gap(postgres):
+    identity = postgres.enqueue(
+        "studio", "workspace", {"action": "collection_read", "payload": {"collection": "sessions"}}
+    )
+    postgres.clock = lambda: 1121 + READ_RESULT_RETENTION
+    assert postgres.command(identity) is None
+    with postgres._connect() as db:
+        assert (
+            db.execute(
+                "SELECT count(*) AS count FROM opswatch_relay_commands WHERE id=%s", (identity,)
+            ).fetchone()["count"]
+            == 0
+        )
 
 
 def test_postgres_rolls_back_snapshot_and_command_completion_on_storage_failure(postgres):

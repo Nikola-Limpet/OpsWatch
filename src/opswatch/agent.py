@@ -34,13 +34,14 @@ class Agent:
         if self.lock.locked():
             return "A diagnosis is already running. Try again after it finishes."
         async with self.lock:
-            count = self.store.db.execute(
-                "SELECT count(*) FROM agent_runs WHERE created>?", (time.time() - 3600,)
-            ).fetchone()[0]
-            if count >= self.config.agent.max_per_hour:
-                return "Hourly diagnosis limit reached. Evidence is still available with /incident."
             # Reserve before inference so failures also count toward the spending cap.
             with self.store.db:
+                self.store.db.execute("BEGIN IMMEDIATE")
+                count = self.store.db.execute(
+                    "SELECT count(*) FROM agent_runs WHERE created>?", (time.time() - 3600,)
+                ).fetchone()[0]
+                if count >= self.config.agent.max_per_hour:
+                    return "Hourly diagnosis limit reached. Evidence is still available with /incident."
                 cursor = self.store.db.execute(
                     "INSERT INTO agent_runs(created,backend,model,response) VALUES (?,?,?,?)",
                     (time.time(), self.config.agent.backend, self.model(), "pending"),

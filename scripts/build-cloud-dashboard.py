@@ -16,19 +16,40 @@ def build(root: Path) -> Path:
     package = stage / "opswatch"
     package.mkdir()
     (package / "__init__.py").write_text("")
-    for name in ("cloud_relay.py", "cloud_store.py", "favicons.py"):
+    for name in (
+        "cloud_relay.py",
+        "cloud_store.py",
+        "favicons.py",
+        "web_assets.py",
+        "studio_api.py",
+        "studio_protocol.py",
+    ):
         shutil.copyfile(source / name, package / name)
     assets = package / "dashboard_assets"
     assets.mkdir()
     for name in (
-        "app.js",
-        "app.css",
-        "index.html",
         "geist-sans.woff2",
         "geist-mono.woff2",
         "FONT-LICENSE.txt",
     ):
         shutil.copyfile(source / "dashboard_assets" / name, assets / name)
+    compiled = source / "dashboard_assets" / "web"
+    if not (compiled / "index.html").is_file():
+        shutil.rmtree(stage)
+        raise ValueError(
+            "Build the React frontend first: npm ci --prefix frontend && npm run build --prefix frontend"
+        )
+    for path in compiled.rglob("*"):
+        if not path.is_file() or path.is_symlink():
+            continue
+        relative = path.relative_to(compiled)
+        if relative not in {Path("index.html"), Path("assets/THIRD-PARTY-LICENSES.txt")} and (
+            relative.parts[0] != "assets" or path.suffix not in {".js", ".css", ".woff2"}
+        ):
+            continue
+        destination = assets / "web" / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, destination)
     (stage / "api" / "index.py").write_text(
         "import os\n"
         "from opswatch.cloud_relay import application as create_app\n"
@@ -39,7 +60,7 @@ def build(root: Path) -> Path:
         "    os.environ['OPSWATCH_RELAY_CSRF_TOKEN'],\n"
         ")\n"
     )
-    (stage / "requirements.txt").write_text("starlette>=0.47,<2\npsycopg[binary]>=3.2,<4\nhttpx>=0.28,<1\n")
+    (stage / "requirements.txt").write_text("fastapi>=0.115,<1\npsycopg[binary]>=3.2,<4\nhttpx>=0.28,<1\n")
     (stage / ".python-version").write_text("3.12\n")
     (stage / ".vercelignore").write_text("**/.env*\n.env*\n.vercel/**\n**/__pycache__/**\n.git/**\n")
     (stage / "vercel.json").write_text(

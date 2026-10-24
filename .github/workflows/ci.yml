@@ -11,6 +11,19 @@ permissions:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: opswatch_test
+          POSTGRES_PASSWORD: opswatch-ci-only
+          POSTGRES_DB: opswatch_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U opswatch_test -d opswatch_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      OPSWATCH_TEST_DATABASE_URL: postgresql://opswatch_test:opswatch-ci-only@127.0.0.1:5432/opswatch_test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -20,8 +33,10 @@ jobs:
         with:
           node-version: '22'
       - run: uv sync --frozen --group dev
+      - run: npm ci --prefix frontend
+      - run: npm run typecheck --prefix frontend
+      - run: npm test --prefix frontend
+      - run: npm run build --prefix frontend
       - run: uv run pytest -q
       - run: uv run ruff check src scripts tests api
       - run: uv run ruff format --check src scripts tests api
-      - run: node --check src/opswatch/dashboard_assets/app.js
-      - run: node --test tests/dashboard-workspace.test.cjs

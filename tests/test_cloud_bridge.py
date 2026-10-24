@@ -63,6 +63,72 @@ def command(kind="services", target="web", payload=None, **extra):
     }
 
 
+def test_studio_commands_are_bounded_actions_not_arbitrary_worker_instructions(workspace):
+    _, config, store = workspace
+    worker = bridge(config, store, None)
+    valid = command("studio", "workspace", {"action": "session_create", "payload": {"title": "API"}})
+    assert worker.valid_command(valid)
+    assert not worker.valid_command(command("studio", "workspace", {"action": "shell", "payload": {}}))
+    assert not worker.valid_command(command("studio", "other", valid["payload"]))
+
+
+def test_studio_bridge_commands_persist_sessions_once_and_publish_them(workspace):
+    from opswatch.studio import studio_snapshot
+
+    _, config, store = workspace
+    worker = bridge(config, store, None)
+    action = command(
+        "studio", "workspace", {"action": "session_create", "payload": {"title": "Investigate Shop"}}
+    )
+    assert worker.process_command(action) == (True, True)
+    first = worker.pending_results()[0]
+    assert first["error"] is None
+    session_id = first["result"]["session"]["id"]
+    assert worker.process_command(action) == (True, False)
+    overview = studio_snapshot(config)
+    assert overview["counts"]["sessions"] == 1
+    assert overview["sessions"][0]["id"] == session_id
+
+
+def test_old_read_receipts_do_not_fill_outbox_and_mutation_replay_stays_safe(workspace):
+    from opswatch.cloud_store import READ_RESULT_RETENTION
+    from opswatch.studio import Studio
+
+    _, config, store = workspace
+    studio = Studio(config, store)
+    session = studio.dispatch("session_create", {}, str(uuid4()))["session"]["id"]
+    worker = bridge(config, store, None)
+    read = command("studio", "workspace", {"action": "session_read", "payload": {"session_id": session}})
+    mutation = command()
+    assert worker.process_command(read)[0]
+    assert worker.process_command(mutation)[0]
+    assert len(worker.pending_results()) == 2
+    worker.clock = lambda: 1061 + READ_RESULT_RETENTION
+    assert [item["id"] for item in worker.pending_results()] == [mutation["id"]]
+    assert worker.process_command(mutation) == (True, False)
+    assert (
+        store.db.execute("SELECT count(*) FROM cloud_bridge_commands WHERE id=?", (read["id"],)).fetchone()[0]
+        == 0
+    )
+
+
+def test_read_receipt_expiry_migrates_existing_bridge_storage_without_losing_results(workspace):
+    _, config, store = workspace
+    store.db.execute(
+        "CREATE TABLE cloud_bridge_commands(id TEXT PRIMARY KEY,result TEXT NOT NULL,"
+        "acknowledged INTEGER NOT NULL DEFAULT 0)"
+    )
+    identity = str(uuid4())
+    store.db.execute(
+        "INSERT INTO cloud_bridge_commands VALUES(?,?,0)",
+        (identity, json.dumps({"id": identity, "result": {"enabled": False}, "error": None})),
+    )
+    store.db.commit()
+    worker = bridge(config, store, None)
+    assert worker.pending_results()[0]["id"] == identity
+    assert "discard_after" in {row[1] for row in store.db.execute("PRAGMA table_info(cloud_bridge_commands)")}
+
+
 def test_snapshot_compaction_preserves_open_incidents_and_active_repairs(monkeypatch):
     from opswatch import cloud_bridge
 

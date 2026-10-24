@@ -1,0 +1,3 @@
+# Source lives in frontend/. Preserve literal whitespace in generated bundles.
+src/opswatch/dashboard_assets/web/assets/*.js -diff linguist-generated=true
+src/opswatch/dashboard_assets/web/assets/*.css -diff linguist-generated=true

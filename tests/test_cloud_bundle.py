@@ -9,26 +9,39 @@ def test_cloud_bundle_contains_only_public_sources_and_assets(tmp_path):
     spec.loader.exec_module(module)
     source = tmp_path / "src" / "opswatch"
     source.mkdir(parents=True)
-    for name in ("cloud_relay.py", "cloud_store.py", "favicons.py"):
+    for name in (
+        "cloud_relay.py",
+        "cloud_store.py",
+        "favicons.py",
+        "web_assets.py",
+        "studio_api.py",
+        "studio_protocol.py",
+    ):
         (source / name).write_text("# public application source\n")
     assets = source / "dashboard_assets"
     assets.mkdir()
     for name in (
-        "app.js",
-        "app.css",
-        "index.html",
         "geist-sans.woff2",
         "geist-mono.woff2",
         "FONT-LICENSE.txt",
     ):
         (assets / name).write_text("public asset")
+    (assets / "web" / "assets" / "chunks").mkdir(parents=True)
+    (assets / "web" / "index.html").write_text("public React index")
+    (assets / "web" / "assets" / "app.js").write_text("public compiled React")
+    (assets / "web" / "assets" / "THIRD-PARTY-LICENSES.txt").write_text("MIT notices")
+    (assets / "web" / "assets" / "chunks" / "chat-123.js").write_text("public lazy chat")
+    (assets / "web" / "assets" / "private.map").write_text("PRIVATE-CREDENTIAL-MUST-NOT-UPLOAD")
+    (assets / "web" / "secret.json").write_text("PRIVATE-CREDENTIAL-MUST-NOT-UPLOAD")
     for path in (tmp_path / ".env", tmp_path / "config.local.yaml", source / "private_credentials.json"):
         path.write_text("PRIVATE-CREDENTIAL-MUST-NOT-UPLOAD")
     stage = module.build(tmp_path)
     assert stage.parent == tmp_path / "data"
     assert (stage / "api" / "index.py").exists()
     assert (stage / "opswatch" / "cloud_relay.py").exists()
-    assert (stage / "opswatch" / "dashboard_assets" / "app.js").exists()
+    assert (stage / "opswatch" / "dashboard_assets" / "web" / "assets" / "app.js").exists()
+    assert (stage / "opswatch" / "dashboard_assets" / "web" / "assets" / "THIRD-PARTY-LICENSES.txt").exists()
+    assert (stage / "opswatch" / "dashboard_assets" / "web" / "assets" / "chunks" / "chat-123.js").exists()
     assert not any(
         "PRIVATE-CREDENTIAL-MUST-NOT-UPLOAD" in path.read_text()
         for path in stage.rglob("*")

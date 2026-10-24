@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import binascii
 import copy
-import html
 import json
 import math
 import re
@@ -14,14 +13,15 @@ import zlib
 from pathlib import Path
 from uuid import UUID
 
-from starlette.applications import Starlette
+from fastapi import FastAPI, Request
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
-from starlette.routing import Route
+from starlette.responses import JSONResponse, Response
 
 from .cloud_store import RelayError
 from .favicons import image_type
+from .studio_api import read_studio_action
+from .web_assets import SPA_PATHS, frontend_asset, frontend_page
 
 ASSETS = Path(__file__).with_name("dashboard_assets")
 LIMIT = 4 * 1024 * 1024
@@ -215,7 +215,7 @@ def public_snapshot(snapshot, freshness, now):
     return data
 
 
-def application(store, bridge_token: str, csrf_token: str, assets_path=None) -> Starlette:
+def application(store, bridge_token: str, csrf_token: str, assets_path=None) -> FastAPI:
     """Build a relay with stable, separately provisioned machine and browser secrets."""
     if not bridge_token or not csrf_token or bridge_token == csrf_token:
         raise ValueError("Distinct bridge and CSRF secrets are required")
@@ -226,27 +226,17 @@ def application(store, bridge_token: str, csrf_token: str, assets_path=None) -> 
             secrets.compare_digest(request.headers.get("x-opswatch-csrf", "").encode(), csrf_token.encode())
         )
 
-    async def overview(request):
-        return HTMLResponse(
-            (assets / "index.html")
-            .read_text()
-            .replace(
-                "__OPSWATCH_CSRF__",
-                html.escape(csrf_token, quote=True),
-            )
-        )
+    async def overview(request: Request):
+        return frontend_page(assets, csrf_token)
 
-    async def asset(request):
-        name = request.path_params["name"]
-        if name not in ASSET_NAMES or not (assets / name).is_file():
-            return Response(status_code=404)
-        return FileResponse(assets / name)
+    async def asset(request: Request):
+        return frontend_asset(assets, request.path_params["name"])
 
-    async def snapshot(request):
+    async def snapshot(request: Request):
         data, freshness = await run_in_threadpool(store.read_snapshot)
         return JSONResponse(public_snapshot(data, freshness, store.clock()))
 
-    async def incident(request):
+    async def incident(request: Request):
         ref = request.path_params["ref"]
         if not INCIDENT.fullmatch(ref):
             return Response(status_code=404)
@@ -255,7 +245,7 @@ def application(store, bridge_token: str, csrf_token: str, assets_path=None) -> 
         item = next((i for i in items if i.get("ref") == ref), None)
         return JSONResponse(item) if item else Response(status_code=404)
 
-    async def icon(request):
+    async def icon(request: Request):
         target = request.path_params["target"]
         if not IDENTITY.fullmatch(target):
             return Response(status_code=404)
@@ -274,7 +264,7 @@ def application(store, bridge_token: str, csrf_token: str, assets_path=None) -> 
             },
         )
 
-    async def sync(request):
+    async def sync(request: Request):
         if not secrets.compare_digest(
             request.headers.get("authorization", "").encode(),
             f"Bearer {bridge_token}".encode(),
@@ -286,7 +276,7 @@ def application(store, bridge_token: str, csrf_token: str, assets_path=None) -> 
             raise RelayError(400, "Invalid synchronization payload.") from error
         return JSONResponse(await run_in_threadpool(store.sync, payload))
 
-    async def enqueue(request):
+    async def enqueue(request: Request):
         if not authorized(request):
             raise RelayError(403, "Reload the dashboard before changing monitoring or starting a fix.")
         kind = request.path_params["kind"] if "kind" in request.path_params else "fix"
@@ -311,7 +301,7 @@ def application(store, bridge_token: str, csrf_token: str, assets_path=None) -> 
         command_id = await run_in_threadpool(store.enqueue, kind, target, payload, identity)
         return JSONResponse({"command_id": command_id}, status_code=202)
 
-    async def command(request):
+    async def command(request: Request):
         try:
             identity = uuid_value(request.path_params["identity"])
         except ValueError:
@@ -319,19 +309,46 @@ def application(store, bridge_token: str, csrf_token: str, assets_path=None) -> 
         data = await run_in_threadpool(store.command, identity)
         return JSONResponse(data) if data else Response(status_code=404)
 
-    app = Starlette(
-        routes=[
-            Route("/", overview),
-            Route("/assets/{name}", asset),
-            Route("/favicons/{target}", icon),
-            Route("/api/snapshot", snapshot),
-            Route("/api/incidents/{ref}", incident),
-            Route("/api/bridge/sync", sync, methods=["POST"]),
-            Route("/api/incidents/{target}/fix", enqueue, methods=["POST"]),
-            Route("/api/{kind}/{target}/monitoring", enqueue, methods=["POST"]),
-            Route("/api/commands/{identity}", command),
-        ]
+    async def studio_state(request: Request):
+        data, freshness = await run_in_threadpool(store.read_snapshot)
+        studio = copy.deepcopy(data.get("studio")) if data else None
+        if not isinstance(studio, dict):
+            raise RelayError(503, "Agent workspace is waiting for an updated local bridge.")
+        if store.clock() - freshness > 60:
+            studio.setdefault("worker", {})["status"] = "stale"
+            studio.setdefault("context", {})["stale"] = True
+        return JSONResponse(studio)
+
+    async def studio_action(request: Request):
+        if not authorized(request):
+            raise RelayError(403, "Reload the dashboard before changing the agent workspace.")
+        try:
+            action, payload, identity = await read_studio_action(request)
+        except ValueError as error:
+            raise RelayError(400, str(error)) from error
+        command_id = await run_in_threadpool(
+            store.enqueue, "studio", "workspace", {"action": action, "payload": payload}, identity
+        )
+        return JSONResponse({"command_id": command_id}, status_code=202)
+
+    app = FastAPI(
+        title="OpsWatch relay API", version="0.2.0", docs_url=None, redoc_url=None, openapi_url=None
     )
+    for path in SPA_PATHS:
+        app.add_api_route(path, overview, methods=["GET"], include_in_schema=False)
+    for path, endpoint, methods in [
+        ("/assets/{name:path}", asset, ["GET"]),
+        ("/favicons/{target}", icon, ["GET"]),
+        ("/api/snapshot", snapshot, ["GET"]),
+        ("/api/incidents/{ref}", incident, ["GET"]),
+        ("/api/bridge/sync", sync, ["POST"]),
+        ("/api/incidents/{target}/fix", enqueue, ["POST"]),
+        ("/api/{kind}/{target}/monitoring", enqueue, ["POST"]),
+        ("/api/commands/{identity}", command, ["GET"]),
+        ("/api/studio", studio_state, ["GET"]),
+        ("/api/studio/actions", studio_action, ["POST"]),
+    ]:
+        app.add_api_route(path, endpoint, methods=methods, response_model=None)
 
     async def headers(request, call_next):
         try:

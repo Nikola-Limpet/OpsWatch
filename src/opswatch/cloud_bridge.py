@@ -21,12 +21,14 @@ from uuid import UUID
 
 import httpx
 
+from .cloud_store import READ_RESULT_RETENTION
 from .config import Config, load_config, secret
 from .dashboard import public_repair, snapshot
 from .favicons import Favicons
 from .repairs import Repairs
 from .selection import set_selection
 from .storage import Store
+from .studio_protocol import READ_ACTIONS, validate_action
 
 log = logging.getLogger(__name__)
 REQUEST_LIMIT = 4 * 1024 * 1024
@@ -38,6 +40,10 @@ def encoded(payload: dict) -> bytes:
 
 def relay_snapshot(config: Config) -> dict | None:
     value = snapshot(config)
+    if config is not None:
+        from .studio import studio_snapshot
+
+        value["studio"] = studio_snapshot(config)
     if len(encoded(value)) <= REQUEST_LIMIT // 2:
         return value
 
@@ -142,8 +148,12 @@ class CloudBridge:
         self.stop = asyncio.Event()
         with self.store.db:
             self.store.db.execute("""CREATE TABLE IF NOT EXISTS cloud_bridge_commands (
-                id TEXT PRIMARY KEY, result TEXT NOT NULL, acknowledged INTEGER NOT NULL DEFAULT 0
+                id TEXT PRIMARY KEY, result TEXT NOT NULL, acknowledged INTEGER NOT NULL DEFAULT 0,
+                discard_after REAL
             )""")
+            columns = {row[1] for row in self.store.db.execute("PRAGMA table_info(cloud_bridge_commands)")}
+            if "discard_after" not in columns:
+                self.store.db.execute("ALTER TABLE cloud_bridge_commands ADD COLUMN discard_after REAL")
 
     def current_config(self) -> Config:
         if self.config._source_path:
@@ -154,6 +164,7 @@ class CloudBridge:
         return self.config
 
     def pending_results(self) -> list[dict]:
+        self.prune_read_results()
         return [
             json.loads(row[0])
             for row in self.store.db.execute(
@@ -161,16 +172,23 @@ class CloudBridge:
             )
         ]
 
-    def save_result(self, result: dict):
+    def prune_read_results(self):
+        with self.store.db:
+            self.store.db.execute("DELETE FROM cloud_bridge_commands WHERE discard_after<=?", (self.clock(),))
+
+    def save_result(self, result: dict, discard_after=None):
         with self.store.db:
             self.store.db.execute(
-                "INSERT OR REPLACE INTO cloud_bridge_commands(id,result,acknowledged) VALUES (?,?,0)",
-                (result["id"], json.dumps(result, allow_nan=False)),
+                "INSERT INTO cloud_bridge_commands(id,result,acknowledged,discard_after) VALUES (?,?,0,?) "
+                "ON CONFLICT(id) DO UPDATE SET result=excluded.result,acknowledged=0,"
+                "discard_after=COALESCE(cloud_bridge_commands.discard_after,excluded.discard_after)",
+                (result["id"], json.dumps(result, allow_nan=False), discard_after),
             )
 
     def process_command(self, command) -> tuple[bool, bool]:
         if not isinstance(command, dict) or not (identity := command_id(command.get("id"))):
             return False, False
+        self.prune_read_results()
         row = self.store.db.execute(
             "SELECT result FROM cloud_bridge_commands WHERE id=?", (identity,)
         ).fetchone()
@@ -180,21 +198,34 @@ class CloudBridge:
             return True, False
         result = {"id": identity, "result": None, "error": "Invalid or expired command."}
         valid = False
+        discard_after = None
         try:
             valid = self.valid_command(command)
         except (TypeError, ValueError, OverflowError):
             pass
         if valid:
+            if command["kind"] == "studio" and command["payload"]["action"] in READ_ACTIONS:
+                discard_after = command["expires_at"] + READ_RESULT_RETENTION
             # Persist before side effects. A crash in the narrow execution window must never replay
             # a mutation; the dashboard can report the uncertain result and let the owner review.
             result["error"] = "Local execution was interrupted; review local state before retrying."
-            self.save_result(result)
+            self.save_result(result, discard_after)
             try:
                 config = self.current_config()
                 if command["kind"] == "fix":
                     result["result"] = public_repair(
                         Repairs(config, self.store).enqueue(command["target"], "cloud-dashboard")
                     )
+                elif command["kind"] == "studio":
+                    from .studio import Studio
+
+                    action = command["payload"]
+                    result["result"] = Studio(config, self.store).dispatch(
+                        action["action"], action["payload"], identity
+                    )
+                    if len(encoded(result["result"])) > 60000:
+                        result["result"] = None
+                        raise ValueError("The agent result exceeded the cloud page size. Use a smaller page.")
                 else:
                     enabled = command["payload"]["enabled"]
                     targets = set_selection(config, command["kind"], command["target"], enabled)
@@ -205,7 +236,7 @@ class CloudBridge:
                 result["error"] = (
                     "Command could not be completed locally. Review local configuration and state."
                 )
-        self.save_result(result)
+        self.save_result(result, discard_after)
         return True, result["error"] is None
 
     def valid_command(self, command: dict) -> bool:
@@ -221,6 +252,14 @@ class CloudBridge:
             return False
         if kind == "fix":
             return not payload and bool(re.fullmatch(r"OW-[0-9]{1,17}", target))
+        if kind == "studio":
+            if target != "workspace" or set(payload) != {"action", "payload"}:
+                return False
+            try:
+                validate_action(payload["action"], payload["payload"])
+            except (TypeError, ValueError):
+                return False
+            return True
         return (
             kind in {"services", "projects"}
             and set(payload) == {"enabled"}
@@ -346,12 +385,19 @@ class CloudBridge:
             loop = asyncio.get_running_loop()
             for signum in (signal.SIGTERM, signal.SIGINT):
                 loop.add_signal_handler(signum, self.stop.set)
+            from .studio import StudioWorker
+
+            studio_task = asyncio.create_task(StudioWorker(self.config).serve(self.stop))
             try:
                 while not self.stop.is_set():
                     await self.sync_once()
                     with contextlib.suppress(TimeoutError):
                         await asyncio.wait_for(self.stop.wait(), timeout=10)
             finally:
+                self.stop.set()
+                studio_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await studio_task
                 if self.icon_task:
                     self.icon_task.cancel()
                     with contextlib.suppress(asyncio.CancelledError):

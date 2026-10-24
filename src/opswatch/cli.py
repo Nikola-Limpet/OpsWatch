@@ -47,6 +47,7 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser("check", help="Collect once without sending messages or changing firewalls")
     commands.add_parser("run", help="Run continuous monitoring and the configured Telegram mode")
     commands.add_parser("repair-worker", help="Process manually queued repair jobs")
+    commands.add_parser("studio-worker", help="Process persistent agent chats, reports, and improvement jobs")
     commands.add_parser("cloud-bridge", help="Synchronize the private cloud dashboard from this computer")
     commands.add_parser(
         "install-cloud-service", help="Install the separate outbound dashboard bridge service"
@@ -83,6 +84,21 @@ def write_private(path: Path, content: str):
 
 
 async def execute(args, config: Config, store: Store):
+    if args.command == "studio-worker":
+        import signal
+
+        from .studio import StudioWorker
+
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(signum, stop.set)
+        try:
+            await StudioWorker(config).serve(stop)
+        finally:
+            for signum in (signal.SIGTERM, signal.SIGINT):
+                loop.remove_signal_handler(signum)
+        return
     if args.command == "cloud-bridge":
         from .cloud_bridge import CloudBridge
 

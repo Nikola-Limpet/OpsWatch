@@ -1,5 +1,5 @@
 # Minimal runtime dependencies for the Vercel dashboard relay.
 # Local monitoring and development use pyproject.toml and uv.lock.
-starlette>=0.47,<1
+fastapi>=0.115,<1
 psycopg[binary]>=3.2,<4
 httpx>=0.28,<1

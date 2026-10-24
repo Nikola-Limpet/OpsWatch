@@ -17,3 +17,5 @@ scripts/**
 **/*.sqlite*
 **/*.db
 **/*.log
+frontend/node_modules/**
+frontend/coverage/**

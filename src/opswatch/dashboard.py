@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import secrets
 import sqlite3
@@ -11,12 +13,11 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import yaml
-from starlette.applications import Starlette
+from fastapi import FastAPI, Request
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from starlette.responses import FileResponse, HTMLResponse, JSONResponse
-from starlette.routing import Route
+from starlette.responses import JSONResponse
 
 from .config import Config
 from .favicons import Favicons
@@ -25,6 +26,8 @@ from .redact import sanitize
 from .repairs import Repairs
 from .selection import projects, refresh_selection, set_selection
 from .storage import Store
+from .studio_api import read_studio_action
+from .web_assets import SPA_PATHS, frontend_asset, frontend_page
 
 ASSETS = Path(__file__).with_name("dashboard_assets")
 EVENT_KINDS = {"application error", "security", "query performance"}
@@ -283,7 +286,7 @@ def snapshot(config: Config) -> dict:
     }
 
 
-def application(config: Config) -> Starlette:
+def application(config: Config) -> FastAPI:
     icons = Favicons(config)
     action_token = secrets.token_urlsafe(32)
 
@@ -294,7 +297,7 @@ def application(config: Config) -> Starlette:
             request.headers.get("X-OpsWatch-CSRF", "").encode(), action_token.encode()
         )
 
-    async def favicon(request):
+    async def favicon(request: Request):
         from starlette.responses import Response
 
         icon = await icons.get(request.path_params["target_id"])
@@ -309,22 +312,18 @@ def application(config: Config) -> Starlette:
             },
         )
 
-    async def overview(request):
-        return HTMLResponse((ASSETS / "index.html").read_text().replace("__OPSWATCH_CSRF__", action_token))
+    async def overview(request: Request):
+        return frontend_page(ASSETS, action_token)
 
-    async def asset(request):
-        name = request.path_params["name"]
-        if name not in {
-            "app.css",
-            "app.js",
-            "geist-sans.woff2",
-            "geist-mono.woff2",
-            "FONT-LICENSE.txt",
-        }:
-            return JSONResponse({"error": "Not found"}, status_code=404)
-        return FileResponse(ASSETS / name)
+    async def csrf(request: Request):
+        # The development server injects this same-origin token into its HTML.
+        # The production page already receives it in frontend_page().
+        return JSONResponse({"token": action_token})
 
-    async def state(request):
+    async def asset(request: Request):
+        return frontend_asset(ASSETS, request.path_params["name"])
+
+    async def state(request: Request):
         try:
             return JSONResponse(snapshot(config))
         except sqlite3.Error:
@@ -332,7 +331,7 @@ def application(config: Config) -> Starlette:
                 {"error": "Monitor data is temporarily unavailable. Try refreshing."}, status_code=503
             )
 
-    async def evidence(request):
+    async def evidence(request: Request):
         refresh_selection(config)
         ref = request.path_params["ref"]
         if not ref.startswith("OW-") or not ref[3:].isascii() or not ref[3:].isdigit() or len(ref) > 20:
@@ -349,7 +348,7 @@ def application(config: Config) -> Starlette:
                 return JSONResponse({"error": "Monitor data is temporarily unavailable."}, status_code=503)
         return JSONResponse({"error": "Incident not found"}, status_code=404)
 
-    async def start_fix(request):
+    async def start_fix(request: Request):
         refresh_selection(config)
         if not authorized(request):
             return JSONResponse(
@@ -378,7 +377,7 @@ def application(config: Config) -> Starlette:
                 {"error": "Repair queue is temporarily unavailable. Try again."}, status_code=503
             )
 
-    async def monitoring(request):
+    async def monitoring(request: Request):
         if not authorized(request):
             return JSONResponse(
                 {"error": "Reload this local dashboard before changing monitoring."}, status_code=403
@@ -410,19 +409,77 @@ def application(config: Config) -> Starlette:
                 status_code=503,
             )
 
-    app = Starlette(
-        routes=[
-            Route("/", overview),
-            Route("/assets/{name}", asset),
-            Route("/favicons/{target_id}", favicon),
-            Route("/api/snapshot", state),
-            Route("/api/incidents/{ref}", evidence),
-            Route("/api/incidents/{ref}/fix", start_fix, methods=["POST"]),
-            Route("/api/services/{identity}/monitoring", monitoring, methods=["POST"]),
-            Route("/api/projects/{identity}/monitoring", monitoring, methods=["POST"]),
-        ],
+    async def studio_state(request: Request):
+        from .studio import studio_snapshot
+
+        try:
+            return JSONResponse(studio_snapshot(config))
+        except (sqlite3.Error, OSError, ValueError):
+            return JSONResponse({"error": "Agent workspace is temporarily unavailable."}, status_code=503)
+
+    async def studio_action(request: Request):
+        from .studio import Studio
+
+        if not authorized(request):
+            return JSONResponse(
+                {"error": "Reload the dashboard before changing the agent workspace."}, status_code=403
+            )
+        try:
+            action, payload, identity = await read_studio_action(request)
+        except ValueError as error:
+            return JSONResponse({"error": str(error)}, status_code=400)
+        try:
+            with closing(Store(config.data_dir)) as store:
+                result = Studio(config, store).dispatch(action, payload, identity)
+            return JSONResponse(result, status_code=202 if "job" in result else 200)
+        except KeyError:
+            return JSONResponse({"error": "The requested agent record was not found."}, status_code=404)
+        except ValueError as error:
+            return JSONResponse({"error": sanitize(str(error))}, status_code=409)
+        except (sqlite3.Error, OSError):
+            return JSONResponse({"error": "Could not save the agent workspace. Try again."}, status_code=503)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(app):
+        from .studio import StudioWorker
+
+        stop = asyncio.Event()
+        worker = asyncio.create_task(StudioWorker(config).serve(stop))
+        try:
+            yield
+        finally:
+            stop.set()
+            try:
+                await asyncio.wait_for(asyncio.shield(worker), timeout=5)
+            except TimeoutError:
+                worker.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await worker
+
+    app = FastAPI(
+        title="OpsWatch API",
+        version="0.2.0",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url="/api/openapi.json",
+        lifespan=lifespan,
         middleware=[Middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1", "[::1]"])],
     )
+    for path in SPA_PATHS:
+        app.add_api_route(path, overview, methods=["GET"], include_in_schema=False)
+    for path, endpoint, methods in [
+        ("/assets/{name:path}", asset, ["GET"]),
+        ("/favicons/{target_id}", favicon, ["GET"]),
+        ("/api/snapshot", state, ["GET"]),
+        ("/api/csrf", csrf, ["GET"]),
+        ("/api/incidents/{ref}", evidence, ["GET"]),
+        ("/api/incidents/{ref}/fix", start_fix, ["POST"]),
+        ("/api/services/{identity}/monitoring", monitoring, ["POST"]),
+        ("/api/projects/{identity}/monitoring", monitoring, ["POST"]),
+        ("/api/studio", studio_state, ["GET"]),
+        ("/api/studio/actions", studio_action, ["POST"]),
+    ]:
+        app.add_api_route(path, endpoint, methods=methods, response_model=None)
 
     async def headers(request, call_next):
         response = await call_next(request)

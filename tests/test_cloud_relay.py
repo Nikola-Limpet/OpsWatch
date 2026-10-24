@@ -14,6 +14,52 @@ AUTH = {"Authorization": "Bearer bridge-secret"}
 CSRF = {"Origin": "https://dashboard.example", "X-OpsWatch-CSRF": "stable-secret"}
 
 
+async def test_studio_actions_use_validated_idempotent_local_worker_commands(client):
+    from fastapi import FastAPI
+
+    http, store = client
+    assert isinstance(http._transport.app, FastAPI)
+    payload = {"action": "session_create", "payload": {"title": "Investigate API", "role": "chat"}}
+    assert (await http.post("/api/studio/actions", json=payload)).status_code == 403
+    identity = str(uuid4())
+    headers = {**CSRF, "X-OpsWatch-Request-ID": identity}
+    for _ in range(2):
+        response = await http.post("/api/studio/actions", json=payload, headers=headers)
+        assert response.status_code == 202
+        assert response.json() == {"command_id": identity}
+    assert len(store.data.commands) == 1
+    command = store.data.commands[0]
+    assert command["kind"] == "studio" and command["target"] == "workspace"
+    assert command["payload"]["action"] == "session_create"
+    assert command["payload"]["payload"]["scope"] == {"kind": "workspace", "id": None}
+    response = await http.post(
+        "/api/studio/actions", json={"action": "shell", "payload": {"command": "whoami"}}, headers=headers
+    )
+    assert response.status_code == 400
+
+
+async def test_studio_public_reads_mark_stale_worker_and_keep_saved_history(client):
+    http, store = client
+    data = copy.deepcopy(SNAPSHOT)
+    data["studio"] = {
+        "sessions": [{"id": str(uuid4()), "title": "Saved investigation"}],
+        "reports": [],
+        "problems": [],
+        "preferences": {"revision": 1},
+        "worker": {"status": "running", "last_cycle": store.clock()},
+        "context": {"generated_at": store.clock()},
+        "counts": {"sessions": 1},
+        "has_more": False,
+    }
+    store.sync({"snapshot": data})
+    store.now += 61
+    response = await http.get("/api/studio")
+    assert response.status_code == 200
+    assert response.json()["sessions"][0]["title"] == "Saved investigation"
+    assert response.json()["worker"]["status"] == "stale"
+    assert response.json()["context"]["stale"] is True
+
+
 @pytest.fixture
 async def client():
     store = MemoryRelay()

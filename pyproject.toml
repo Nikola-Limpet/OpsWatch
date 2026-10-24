@@ -16,6 +16,7 @@ dependencies = [
   "mcp>=1.12,<2",
   "starlette>=0.47,<2",
   "uvicorn>=0.35,<1",
+  "fastapi>=0.115,<1",
 ]
 
 [project.scripts]

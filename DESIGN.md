@@ -13,10 +13,18 @@ explicit action in incident details, followed by job progress and a draft PR lin
 Agent work has a persistent navigation destination for active jobs and recorded outcomes.
 The Projects view groups related services and keeps disabled services available for
 restoration. A project action names its scope; per-service controls apply to one row.
+Monitored and Inactive tabs keep paused inventory out of daily monitoring. Compact
+project groups, search, filters, pagination, and service details keep the list manageable.
+
+Agent Studio uses adjacent session, conversation, and context panels on wide screens
+and stacks them on smaller screens. Show pending, failed, interrupted, and cancelled
+jobs explicitly. Evidence sources, coverage gaps, preference revisions, and the pinned
+pstack source should remain inspectable without crowding the conversation. Reports
+are saved documents; improvement results are proposals the owner reviews in Workflow.
 
 - Use neutral black/graphite surfaces, near-black panels, and thin gray borders.
-  Selection and hover states use gray. Reserve green, amber, and red for service
-  states; blue identifies links and keyboard focus.
+  Hover states use gray. Reserve green, amber, and red for service states; blue
+  identifies the selected destination, primary action, links, and keyboard focus.
 - Use locally served variable Geist Sans for UI text and Geist Mono for evidence,
   SQL, commands, and incident IDs. Use 30px page headings, 23px incident headings,
   16px section headings, and a compact 12–14px interface scale. Keep evidence legible
@@ -25,7 +33,7 @@ restoration. A project action names its scope; per-service controls apply to one
   height, with 32px compact controls where space is limited. Keep dense tables
   aligned and use tabular figures for measurements.
 - Use outlined monochrome icons, restrained borders, and flat panels. Avoid colored
-  navigation, gradients, decorative shadows, and artificial monitoring charts.
+  gradients, decorative shadows, and artificial monitoring charts.
 - Apply the same tokens to navigation, forms, tables, badges, dialogs, code blocks,
   empty states, and errors. All status colors also have text labels.
 - On narrow screens, move navigation above the content, stack health information,
@@ -42,4 +50,5 @@ Worker readiness comes from its heartbeat, never from a decorative status label.
 Sources: [colors](https://vercel.com/geist/colors),
 [typography](https://vercel.com/geist/typography), and
 [buttons](https://vercel.com/geist/button). Exact application tokens live in
-`src/opswatch/dashboard_assets/app.css`.
+`frontend/src/styles.css` and `frontend/src/studio.css`. React and TanStack own the
+interface; FastAPI serves the compiled application and protected same-origin API.

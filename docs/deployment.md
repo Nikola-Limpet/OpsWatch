@@ -6,6 +6,10 @@ OpsWatch has two execution environments. The local monitor and repair worker own
 
 Connect the repository to your existing Vercel project and use the repository root as its Root Directory. Select the Other framework preset. The committed `vercel.json` routes dashboard requests to `api/index.py`, includes the UI assets, and excludes local runtime data and development artifacts. Python is pinned to 3.12.
 
+The build command installs `frontend/package-lock.json` with `npm ci` and compiles the React app
+into `src/opswatch/dashboard_assets/web`. FastAPI serves that build and the protected relay API.
+Node.js 22.12+ is needed during the build; the deployed relay remains a Python application.
+
 The current configuration uses Singapore (`sin1`). If you deploy your own instance, choose a suitable region near the dedicated relay database.
 
 Configure these as sensitive environment variables on the dashboard project:
@@ -52,6 +56,17 @@ systemctl --user enable --now opswatch-cloud-bridge
 
 The bridge publishes snapshots every 30 seconds and polls supported commands every 10 seconds. Cloud readings become stale after 60 seconds without a fresh publication. New cloud control requests are rejected while the bridge is offline. If protected open-incident or active-job data cannot fit into a snapshot, the bridge leaves the previous snapshot stale rather than publishing incomplete current coverage.
 
+Upgrade and restart the local bridge when deploying the Agent Studio version. It publishes Studio
+summaries, processes validated Studio actions, and runs the durable local agent job processor.
+Rerun the idempotent relay initialization command above when upgrading; it adds indexes for the
+active queue and temporary read results. Completed Studio history pages expire from the relay and
+local transport receipts ten minutes after their request deadline. Conversations, reports, and
+proposals stay in the local Studio database. Mutation receipts remain available for idempotency.
+The relay stores only public display records and bounded command results. Full conversation history,
+queued job evidence, preference revisions, and feedback remain in local SQLite. Older message pages
+and report details are fetched through bounded read actions. Queued inference continues independently
+of the browser and is not limited by the serverless request duration.
+
 ## Verify a deployment
 
 1. Confirm Vercel reports the deployment as Ready.
@@ -69,6 +84,8 @@ journalctl --user -u opswatch-cloud-bridge -n 30
 For manual deployments, the existing builder creates a minimal source bundle under the ignored `data/` directory:
 
 ```sh
+npm ci --prefix frontend
+npm run build --prefix frontend
 python scripts/build-cloud-dashboard.py
 ```
 

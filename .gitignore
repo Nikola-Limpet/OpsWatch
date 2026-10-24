@@ -21,3 +21,6 @@ dist/
 !/docs/deployment.md
 !/docs/configuration.md
 .vercel
+frontend/node_modules/
+frontend/coverage/
+frontend/.vite/

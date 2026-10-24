@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="opswatch-csrf" content="__OPSWATCH_CSRF__" />
+    <title>OpsWatch · Overview</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%23163c32'/%3E%3Cpath d='M6 22h8l4-11 6 20 4-9h6' fill='none' stroke='%23fff' stroke-width='2.6'/%3E%3C/svg%3E"
+    />
+    <link
+      rel="preload"
+      href="/assets/geist-sans.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="stylesheet" href="/assets/app.css" />
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to dashboard</a>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="#overview" aria-label="OpsWatch overview"
+          ><span class="brand-mark" aria-hidden="true"
+            ><svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M2 12h5l3-8 4 16 3-8h5" /></svg></span
+          >OpsWatch<span class="brand-dot">.</span></a
+        >
+        <div class="workspace">
+          <span class="workspace-symbol">P</span>
+          <div>Personal workspace<small>Production monitoring</small></div>
+        </div>
+        <span class="nav-label">WORKSPACE</span>
+        <nav aria-label="Main navigation">
+          <a href="#overview" data-view="overview"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m3 10 9-7 9 7v11h-7v-7h-4v7H3Z"/></svg></span>Overview</a>
+          <a href="#incidents" data-view="incidents"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m12 3 10 18H2L12 3Z"/><path d="M12 9v5M12 17h.01"/></svg></span>Incidents<span class="nav-count" id="nav-incidents">—</span></a>
+          <a href="#services" data-view="services"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7h7l2 2h9v12H3ZM3 7V4h7l2 3"/></svg></span>Projects<span class="nav-count" id="nav-services">—</span></a>
+          <a href="#agents" data-view="agents"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="9" cy="8" r="3"/><path d="M3 21v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6M21 21v-3a6 6 0 0 0-4-5"/></svg></span>Agent work<span class="nav-count" id="nav-agents">—</span></a>
+          <a href="#queries" data-view="queries"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 4 16 4 16 0V5M4 12c0 4 16 4 16 0"/></svg></span>Database queries</a>
+        </nav>
+        <div class="sidebar-bottom">
+          <div class="local-label">
+            <span class="dot" id="monitor-dot"></span
+            ><strong id="monitor-state">Connecting</strong>
+          </div>
+          <p id="monitor-time">Reading monitor status…</p>
+          <div class="local-foot">
+            <span id="worker-state">Reading worker status…</span>
+          </div>
+        </div>
+      </aside>
+      <main id="main" tabindex="-1">
+        <div class="breadcrumb">
+          Production <span>/</span> <strong id="breadcrumb-page">Overview</strong
+          ><span class="production-label"
+            ><span class="dot"></span>Production</span
+          >
+        </div>
+        <section id="summary" class="health-strip" aria-label="Monitoring summary" hidden></section>
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">OPERATIONS AT A GLANCE</p>
+            <h1 id="page-title">Overview</h1>
+            <p class="subtitle" id="page-subtitle">
+              A clear view of your production stack.
+            </p>
+          </div>
+          <div class="header-actions">
+            <div class="updated">
+              <span id="refresh-label">Waiting for data</span
+              ><small>Auto-refresh every 30 seconds</small>
+            </div>
+            <button class="button" id="refresh">
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path
+                  d="M20 7v5h-5M4 17v-5h5M6.1 6.1a8 8 0 0 1 13.2 3M4.7 14.9a8 8 0 0 0 13.2 3"
+                />
+              </svg>
+              Refresh
+            </button>
+          </div>
+        </header>
+        <div
+          id="connection-error"
+          class="notice error"
+          role="alert"
+          hidden
+        ></div>
+        <div id="loading" class="loading" role="status">
+          Connecting to your local monitor…
+        </div>
+        <div id="content" hidden>
+          <div id="health-banner" class="notice" role="status"></div>
+          <div id="overview-content">
+            <div class="overview-grid">
+              <section class="panel">
+                <div class="panel-header">
+                  <div>
+                    <h2>
+                      Service health
+                      <span class="counter" id="overview-services-count"></span>
+                    </h2>
+                    <p>Latest checks, with attention needed first.</p>
+                  </div>
+                  <a class="text-link" href="#services"
+                    >All services <span aria-hidden="true">↗</span></a
+                  >
+                </div>
+                <div id="overview-services"></div>
+                <div class="panel-footer">
+                  <span class="dot healthy"></span>Checks run independently for
+                  each service
+                </div>
+              </section>
+              <section class="panel recent-panel">
+                <div class="panel-header">
+                  <div>
+                    <h2>Recent incidents</h2>
+                    <p>Latest recorded activity.</p>
+                  </div>
+                  <a
+                    class="text-link"
+                    href="#incidents"
+                    aria-label="View all incidents"
+                    >View all ↗</a
+                  >
+                </div>
+                <div id="recent-incidents"></div>
+              </section>
+            </div>
+            <section class="panel response-panel">
+              <div class="panel-header">
+                <div>
+                  <h2>Response times</h2>
+                  <p>Latest HTTP measurement per service.</p>
+                </div>
+                <span class="quiet-label">CURRENT SAMPLES · MS</span>
+              </div>
+              <div id="response-times"></div>
+              <div class="panel-footer">
+                Each bar shows one recorded sample. Thresholds come from your
+                monitor configuration.
+              </div>
+            </section>
+          </div>
+          <section id="services-content" class="panel" hidden>
+            <div class="service-tabs-bar">
+              <div class="service-tabs" role="tablist" aria-label="Monitoring status">
+                <button id="tab-monitored" class="service-tab" role="tab" aria-selected="true" aria-controls="service-list" data-service-tab="monitored">Monitored <span id="tab-monitored-count">0</span></button>
+                <button id="tab-inactive" class="service-tab" role="tab" aria-selected="false" aria-controls="service-list" tabindex="-1" data-service-tab="inactive">Inactive <span id="tab-inactive-count">0</span></button>
+              </div>
+              <button class="text-button" id="collapse-projects">Collapse all</button>
+            </div>
+            <p id="service-tab-description" class="service-tab-description">Services with monitoring enabled. Paused services are in Inactive.</p>
+            <div class="filters service-filters">
+              <label class="search"
+                ><span aria-hidden="true">⌕</span
+                ><input
+                  id="service-search"
+                  type="search"
+                  placeholder="Search projects or services…"
+                  aria-label="Search projects or services" /></label
+              ><select id="provider-filter" aria-label="Filter by provider">
+                <option value="">All providers</option></select
+              ><select id="status-filter" aria-label="Filter by health">
+                <option value="">All health</option>
+                <option value="attention">Needs attention</option>
+                <option value="healthy">Healthy</option>
+                <option value="unknown">Unknown or stale</option>
+              </select>
+            </div>
+            <p
+              id="selection-feedback"
+              class="selection-feedback"
+              role="status"
+              hidden
+            ></p>
+            <p id="service-editability" class="service-tab-description" hidden></p>
+            <div class="services-workspace" id="services-workspace">
+              <div id="service-list" class="service-list" role="tabpanel" aria-labelledby="tab-monitored">
+                <div id="services-table"></div>
+                <div class="service-list-footer">
+                  <span id="services-count"></span>
+                  <div id="services-pagination" class="service-pagination" role="group" aria-label="Project pages">
+                    <button class="button button-compact" id="services-prev" aria-label="Previous project page">Previous</button>
+                    <span id="services-page" class="numeric"></span>
+                    <button class="button button-compact" id="services-next" aria-label="Next project page">Next</button>
+                  </div>
+                </div>
+              </div>
+              <aside id="service-settings" class="service-settings" aria-label="Service details" tabindex="-1" hidden></aside>
+            </div>
+          </section>
+          <section id="incidents-content" class="incident-workspace" hidden aria-label="Incident workspace">
+            <div class="workspace-toolbar">
+              <div class="incident-tabs" role="group" aria-label="Incident views">
+                <button class="view-tab" data-incident-filter="open" aria-pressed="true">Open <span id="tab-open-count">0</span></button>
+                <button class="view-tab" data-incident-filter="active" aria-pressed="false">Agent active <span id="tab-active-count">0</span></button>
+                <button class="view-tab" data-incident-filter="all" aria-pressed="false">History</button>
+              </div>
+              <label class="search"><span aria-hidden="true">⌕</span><input id="incident-search" type="search" placeholder="Search incidents, apps or IDs…" aria-label="Search incidents" /></label>
+              <select id="incident-status" aria-label="Filter incident status">
+                <option value="open">Open incidents</option>
+                <option value="active">Agent active</option>
+                <option value="all">All incidents</option>
+                <option value="resolved">Recovered or quiet</option>
+              </select>
+            </div>
+            <p id="history-caption" class="workspace-caption"></p>
+            <div class="workspace-columns">
+              <div id="incident-list-pane" class="incident-list-pane"><div id="incidents-list"></div></div>
+              <aside id="incident-detail" class="incident-detail" aria-label="Selected incident" tabindex="-1"></aside>
+            </div>
+          </section>
+          <section id="agents-content" class="panel agent-workspace" hidden>
+            <div class="panel-header"><div><h2>Repair queue &amp; outcomes</h2><p id="agent-caption">Recorded activity from your repair worker.</p></div><select id="agent-status" aria-label="Filter agent work"><option value="all">All work</option><option value="active">Active</option><option value="review">Draft PRs to review</option><option value="blocked">Blocked or interrupted</option><option value="completed">Finished attempts</option></select></div>
+            <div id="agent-list"></div>
+          </section>
+          <section id="queries-content" class="panel" hidden>
+            <div class="panel-header">
+              <div>
+                <h2>Database queries</h2>
+                <p>
+                  Recorded interval averages. Viewing this page does not execute
+                  SQL.
+                </p>
+              </div>
+            </div>
+            <div id="queries-list"></div>
+          </section>
+          <footer class="page-footer">
+            <span
+              ><span class="footer-mark">⌁</span> OpsWatch
+              <span class="footer-divider">/</span> Local monitoring, clear
+              evidence.</span
+            ><span id="timezone-label"></span>
+          </footer>
+        </div>
+      </main>
+    </div>
+    <dialog id="detail-dialog" aria-labelledby="detail-title">
+      <div class="dialog-top">
+        <span class="eyebrow" id="detail-label">RECORDED EVIDENCE</span
+        ><button
+          id="close-dialog"
+          class="icon-button"
+          aria-label="Close details"
+        >
+          ×
+        </button>
+      </div>
+      <div id="detail-content"></div>
+    </dialog>
+    <div class="toast" id="toast" role="status" hidden></div>
+  </body>
+</html>

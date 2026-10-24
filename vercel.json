@@ -1,0 +1,15 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "regions": ["sin1"],
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 30,
+      "includeFiles": "src/opswatch/{__init__.py,cloud_relay.py,cloud_store.py,favicons.py,dashboard_assets/**}",
+      "excludeFiles": "{data/**,docs/**,tests/**,scripts/**,.env*,config.local.yaml,inventory.local.json,.venv/**,.superpowers/**,.impeccable/**,.git/**}"
+    }
+  },
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/api/index" }
+  ]
+}

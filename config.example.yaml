@@ -1,0 +1,81 @@
+timezone: Asia/Phnom_Penh
+data_dir: data
+failures_before_alert: 3
+recoveries_before_alert: 2
+reminder_seconds: 1800
+telegram:
+  enabled: false
+  mode: standalone
+  notifications: important
+  warning_after_seconds: 600
+  repeat_after_seconds: 21600
+  recovery_after_seconds: 300
+repair:
+  enabled: false
+  auto_fix: false
+  auto_fix_delay_seconds: 120
+  auto_fix_cooldown_seconds: 21600
+  max_per_day: 4
+agent:
+  backend: hermes
+  provider: openai-codex
+  model: gpt-6.1-sol
+  reasoning: medium
+  auto_diagnose: false
+  max_per_hour: 6
+policy:
+  dry_run: true
+  auto_block: false
+  scan_window_seconds: 300
+  scan_min_requests: 12
+  scan_min_paths: 3
+  block_ttl_seconds: 900
+  allow_cidrs: []
+railway_accounts:
+  - name: default
+  - name: second
+    token_env: RAILWAY_SECOND_API_TOKEN
+vercel_accounts:
+  - name: default
+    # Set your Vercel team slug to avoid following an unrelated active CLI scope.
+    # scope: my-team
+targets:
+  - id: example-app
+    name: Example app
+    # Display related services together; this does not assign a repair repository.
+    project_group: Example project
+    enabled: false
+    kind: http
+    url: https://example.com/health
+    interval_seconds: 60
+    body_contains: '"status":"ok"'
+  - id: example-neon
+    name: Example Neon database
+    project_group: Example project
+    enabled: false
+    kind: postgres
+    dsn_env: NEON_DATABASE_URL
+    interval_seconds: 300
+    slow_ms: 200
+    min_query_calls: 5
+  - id: example-vps
+    name: Example VPS
+    enabled: false
+    kind: server
+    ssh_host: production-vps
+    units: [my-app.service]
+    containers: []
+    logs: true
+  - id: example-access
+    name: Example trusted reverse proxy access log
+    enabled: false
+    kind: logfile
+    log_path: /var/log/nginx/opswatch.jsonl
+    trusted_access_log: true
+    blocker:
+      kind: ssh-nft
+      ssh_host: production-vps
+  # On a Railway target with an applied public domain, native IP bans use:
+  # blocker:
+  #   kind: railway-edge
+  #   permanent: true  # IP bans persist until manually removed; no TTL.

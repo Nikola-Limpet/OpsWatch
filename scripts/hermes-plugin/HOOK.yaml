@@ -1,0 +1,4 @@
+name: opswatch
+description: Send owner-authorized Opswatch command replies through the existing Telegram bot.
+events:
+  - command:*

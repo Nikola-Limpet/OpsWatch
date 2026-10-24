@@ -1,5 +1,18 @@
 import importlib.util
+import json
 from pathlib import Path
+
+
+def test_vercel_static_output_exists_without_bypassing_fastapi_csrf_html():
+    root = Path(__file__).resolve().parents[1]
+    config = json.loads((root / "vercel.json").read_text())
+    output = root / config.get("outputDirectory", "public")
+    assert output.is_dir(), "Vercel requires its configured static output directory after the build"
+    assert not list(output.rglob("*.html")), (
+        "FastAPI must inject the CSRF token before serving application HTML"
+    )
+    assert (root / "src/opswatch/dashboard_assets/web/index.html").is_file()
+    assert config["rewrites"] == [{"source": "/(.*)", "destination": "/api/index"}]
 
 
 def test_cloud_bundle_contains_only_public_sources_and_assets(tmp_path):

@@ -9,6 +9,9 @@ Connect the repository to your existing Vercel project and use the repository ro
 The build command installs `frontend/package-lock.json` with `npm ci` and compiles the React app
 into `src/opswatch/dashboard_assets/web`. FastAPI serves that build and the protected relay API.
 Node.js 22.12+ is needed during the build; the deployed relay remains a Python application.
+The explicit `public` output contains only `robots.txt`. Application HTML stays inside the Python
+function so FastAPI can inject its CSRF token; frontend sources and Node dependencies are excluded
+from the function bundle after compilation.
 
 The current configuration uses Singapore (`sin1`). If you deploy your own instance, choose a suitable region near the dedicated relay database.
 

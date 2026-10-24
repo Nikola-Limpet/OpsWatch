@@ -91,7 +91,12 @@ export function useSnapshot() {
       return data;
     },
     staleTime: 20_000,
-    refetchInterval: 30_000,
+    refetchInterval: (query) =>
+      query.state.data?.investigations?.some((job) =>
+        ['queued', 'running'].includes(job.status),
+      )
+        ? 3000
+        : 30_000,
     refetchOnWindowFocus: true,
     retry: 1,
   });

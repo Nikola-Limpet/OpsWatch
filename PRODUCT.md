@@ -1,6 +1,6 @@
 # OpsWatch
 
-OpsWatch is one developer's workspace for monitoring production applications and supervising AI-assisted repairs. It combines recorded application, provider, log, and database signals with Telegram diagnosis and an isolated repair worker that prepares draft pull requests.
+OpsWatch is one developer's workspace for monitoring production applications and supervising AI-assisted repairs. It combines recorded application, provider, log, and database signals with Telegram notifications and an isolated repair worker that prepares draft pull requests.
 
 The primary task is to identify what needs attention, inspect evidence, and choose the next action. Application health, monitoring coverage, and agent work must remain distinguishable. Missing or stale observations never establish that an application is healthy.
 
@@ -19,3 +19,7 @@ with upstream provenance and the read-only runtime adaptation visible in Workflo
 The frontend uses React and TanStack Router, Query, Table, and Form. FastAPI serves
 the local app and the private cloud relay. Agent jobs execute locally and survive
 browser navigation; serverless requests only transport supported commands and results.
+
+Incident details start durable agent investigations and mapped code repairs directly.
+Agent work includes their recorded progress and outcomes. Telegram notifications link
+back to the dashboard; interactive Telegram controls are optional.

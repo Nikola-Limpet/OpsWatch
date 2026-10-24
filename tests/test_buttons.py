@@ -22,6 +22,7 @@ def test_incident_actions_carry_id_and_only_offer_configured_manual_repairs(tmp_
         targets=[Target(id="web", name="Web", kind="http", url="https://example.com", repair_repo="web")],
     )
     store = Store(str(tmp_path))
+    cfg.telegram.interactive_controls = True
     item = sample(cfg, store)
     buttons = [b for row in formatting.incident_markup(item, cfg)["inline_keyboard"] for b in row]
     assert {b.get("callback_data") for b in buttons} >= {

@@ -2,6 +2,11 @@ import { useState } from 'react';
 import { ArrowRight } from 'lucide-react';
 import { useSnapshot } from '../../api';
 import {
+  InvestigationLink,
+  InvestigationStatus,
+  investigationActive,
+} from './incident-agent';
+import {
   age,
   Badge,
   Empty,
@@ -28,6 +33,17 @@ export function RepairsPage() {
                 job.status,
               )),
   );
+  const investigations = (data.investigations || []).filter(
+    (job) =>
+      filter === 'all' ||
+      (filter === 'active'
+        ? investigationActive(job)
+        : filter === 'review'
+          ? false
+          : filter === 'blocked'
+            ? ['failed', 'interrupted'].includes(job.status)
+            : !investigationActive(job)),
+  );
   const fresh = !query.isError && data.monitor.status === 'running';
   const workerOnline = fresh && data.repair_worker?.status === 'running';
   const incidents = [...data.incidents, ...(data.repair_incidents || [])];
@@ -35,9 +51,9 @@ export function RepairsPage() {
     <section className="panel agent-workspace">
       <div className="panel-header">
         <div>
-          <h2>Repair queue &amp; outcomes</h2>
+          <h2>Investigations &amp; repairs</h2>
           <p>
-            {jobs.length} matching attempts ·{' '}
+            {jobs.length + investigations.length} matching attempts ·{' '}
             {workerOnline
               ? 'Worker heartbeat is current'
               : 'Worker is not confirmed online'}{' '}
@@ -56,6 +72,36 @@ export function RepairsPage() {
           <option value="completed">Finished attempts</option>
         </select>
       </div>
+      {investigations.map((job) => (
+        <article className="agent-row" key={job.id}>
+          <div className="agent-row-heading">
+            <div>
+              <span className="agent-service">
+                {job.service || 'Incident investigation'}
+              </span>
+              <h3>{job.title || job.incident}</h3>
+            </div>
+            <InvestigationStatus job={job} />
+          </div>
+          <div className="agent-row-meta">
+            <span className="mono">{job.incident}</span>
+            <span>Updated {age(job.updated)}</span>
+          </div>
+          <p className="agent-summary">
+            {job.summary ||
+              'The local agent will save its investigation and proposed next steps.'}
+          </p>
+          <div className="agent-actions">
+            <InvestigationLink job={job} />
+            <a
+              className="button button-compact"
+              href={`/incidents?ref=${encodeURIComponent(job.incident)}`}
+            >
+              Inspect incident <ArrowRight size={14} />
+            </a>
+          </div>
+        </article>
+      ))}
       {jobs.map((job) => {
         const status = jobPresentation(job);
         const incident = incidents.find((item) => item.ref === job.incident);
@@ -102,9 +148,9 @@ export function RepairsPage() {
           </article>
         );
       })}
-      {!jobs.length ? (
+      {!jobs.length && !investigations.length ? (
         <Empty title="No matching agent work">
-          Start a fix from a mapped incident to investigate in an isolated
+          Start an investigation from an incident, or a fix in an isolated
           workspace and prepare a draft PR. Existing attempts appear here when
           the worker records them.
         </Empty>

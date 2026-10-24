@@ -7,6 +7,9 @@ telegram:
   enabled: false
   mode: standalone
   notifications: important
+  # Telegram alerts link to the dashboard; enable interactive controls only if wanted.
+  interactive_controls: false
+  dashboard_url: null  # Defaults to OPSWATCH_RELAY_URL when configured.
   warning_after_seconds: 600
   repeat_after_seconds: 21600
   recovery_after_seconds: 300

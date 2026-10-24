@@ -56,6 +56,16 @@ export interface Incident {
   repair?: { available: boolean; reason?: string };
   links?: { text: string; url: string }[];
 }
+export interface Investigation {
+  id: string;
+  incident: string;
+  session_id: string;
+  status: string;
+  summary: string;
+  updated: number;
+  title?: string;
+  service?: string;
+}
 export interface Repair {
   id: string;
   incident: string;
@@ -90,6 +100,7 @@ export interface Snapshot {
   incidents_limit?: number;
   queries: QuerySample[];
   repairs: Repair[];
+  investigations?: Investigation[];
   repair_incidents?: Incident[];
   automation?: {
     auto_fix?: boolean;

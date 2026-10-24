@@ -66,6 +66,7 @@ def relay_snapshot(config: Config) -> dict | None:
         protected = {
             "incidents": lambda item: item.get("status") == "open",
             "repairs": lambda item: item.get("status") not in {"pr_open", "blocked", "cancelled"},
+            "investigations": lambda item: item.get("status") in {"queued", "running"},
             "queries": lambda item: False,
         }
         changed = False

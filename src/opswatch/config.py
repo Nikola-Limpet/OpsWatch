@@ -36,6 +36,8 @@ class Telegram(Model):
     chat_id_env: str = "TELEGRAM_CHAT_ID"
     allowed_user_ids_env: str = "TELEGRAM_USER_ID"
     notifications: Literal["all", "important"] = "all"
+    interactive_controls: bool = False
+    dashboard_url: str | None = None
     warning_after_seconds: int = Field(600, ge=0, le=86400)
     repeat_after_seconds: int = Field(21600, ge=60, le=604800)
     recovery_after_seconds: int = Field(300, ge=0, le=86400)

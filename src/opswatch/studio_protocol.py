@@ -16,6 +16,7 @@ PLAYBOOKS = {"investigation", "bug-fix", "feature", "refactoring", "perf-issue",
 PROBLEM_STATES = {"proposed", "accepted", "dismissed", "in_progress", "done"}
 READ_ACTIONS = {"session_read", "report_read", "collection_read"}
 ACTION_FIELDS = {
+    "incident_investigate": {"incident_ref"},
     "session_create": {"title", "role", "scope", "playbook"},
     "session_read": {"session_id", "before", "limit"},
     "collection_read": {"collection", "before", "limit"},
@@ -110,7 +111,12 @@ def validate_action(action: str, payload: dict) -> dict:
         raise ValueError("The action is missing required fields.")
     if action in {"session_create", "report_create", "improvement_create"}:
         result["scope"] = scope_value(result.get("scope", {"kind": "workspace", "id": None}))
-    if action == "session_create":
+    if action == "incident_investigate":
+        ref = result.get("incident_ref")
+        if not isinstance(ref, str) or not re.fullmatch(r"OW-[0-9]{4,17}", ref):
+            raise ValueError("Supply a valid incident reference.")
+        result["incident_ref"] = f"OW-{int(ref[3:]):04d}"
+    elif action == "session_create":
         result["title"] = text_value(result.get("title", "New conversation"), "Title", 120)
         result["role"] = result.get("role", "chat")
         if not isinstance(result["role"], str) or result["role"] not in ROLES:

@@ -573,3 +573,24 @@ async def test_multiple_large_icons_use_remaining_request_budget(workspace, monk
     assert sum(counts) == 8
     assert counts[0] < 8
     assert not worker.icons
+
+
+def test_cloud_incident_action_queues_one_local_agent_and_publishes_progress(workspace):
+    from opswatch.dashboard import snapshot
+
+    _, config, store = workspace
+    item = store.observe(
+        Observation("web", "probe", "security", False, "Repeated probes", {"requests": 12}, immediate=True),
+        config,
+    )
+    worker = bridge(config, store, None)
+    request = command(
+        "studio", "workspace", {"action": "incident_investigate", "payload": {"incident_ref": item["ref"]}}
+    )
+    assert worker.process_command(request) == (True, True)
+    result = worker.pending_results()[0]
+    assert result["error"] is None
+    assert result["result"]["job"]["status"] == "queued"
+    assert worker.process_command(request) == (True, False)
+    assert store.db.execute("SELECT count(*) FROM studio_jobs").fetchone()[0] == 1
+    assert snapshot(config)["investigations"][0]["id"] == result["result"]["job"]["id"]

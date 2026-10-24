@@ -83,7 +83,15 @@ def validate_service(service):
 def validate_snapshot(snapshot):
     if not isinstance(snapshot, dict):
         raise ValueError("Snapshot must be an object")
-    for key in ("services", "projects", "incidents", "queries", "repairs", "repair_incidents"):
+    for key in (
+        "services",
+        "projects",
+        "incidents",
+        "queries",
+        "repairs",
+        "repair_incidents",
+        "investigations",
+    ):
         items = snapshot.get(key, [])
         if not isinstance(items, list) or len(items) > 5000 or any(not isinstance(i, dict) for i in items):
             raise ValueError("Invalid snapshot collection")

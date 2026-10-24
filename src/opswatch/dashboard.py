@@ -21,7 +21,7 @@ from starlette.responses import JSONResponse
 
 from .config import Config
 from .favicons import Favicons
-from .formatting import incident_markup
+from .formatting import incident_markup, next_step_text
 from .redact import sanitize
 from .repairs import Repairs
 from .selection import projects, refresh_selection, set_selection
@@ -47,9 +47,11 @@ def repair_capability(item, config: Config) -> dict:
     if not config.repair.enabled:
         reason = "Repairs are disabled in this workspace."
     elif item["kind"] in {"monitoring", "security"}:
-        reason = "This incident needs configuration or security review. Use the diagnosis command below."
+        reason = "This incident needs configuration or security review. Start an agent investigation."
     elif not target or not target.repair_repo:
-        reason = "No verified repository is mapped. Choose one with /fix in Hermes before starting a repair."
+        reason = (
+            "No verified repository is mapped. Configure a repository mapping before starting a code repair."
+        )
     return {"available": not reason, "reason": reason}
 
 
@@ -71,6 +73,7 @@ def incident_record(row, config: Config) -> dict:
     item["evidence"] = json.loads(item["evidence"])
     item["ref"] = f"OW-{item['id']:04d}"
     item["repair"] = repair_capability(item, config)
+    item["next_step"] = next_step_text(item["next_step"])
     markup = incident_markup(item, config) or {}
     item["links"] = [
         button for buttons in markup.get("inline_keyboard", []) for button in buttons if "url" in button
@@ -84,6 +87,7 @@ def snapshot(config: Config) -> dict:
     targets = {t.id: t for t in config.targets if t.enabled}
     checks, incidents, open_items, heartbeat, repairs = [], [], [], None, []
     worker_heartbeat = None
+    investigations = []
     repair_incidents = []
     database = Path(config.data_dir).resolve() / "opswatch.sqlite3"
     if database.exists():
@@ -143,6 +147,31 @@ def snapshot(config: Config) -> dict:
                             tuple(missing),
                         )
                     ]
+            if targets and db.execute("SELECT 1 FROM sqlite_master WHERE name='studio_jobs'").fetchone():
+                rows = db.execute(
+                    "WITH visible AS (SELECT j.*, i.target, i.title FROM studio_jobs j "
+                    "JOIN incidents i ON json_extract(j.document,'$.incident_ref')=printf('OW-%04d',i.id) "
+                    f"WHERE i.target IN ({placeholders})) "
+                    "SELECT * FROM visible WHERE status IN ('queued','running') "
+                    "OR id IN (SELECT id FROM visible ORDER BY updated DESC LIMIT 100) ORDER BY updated DESC",
+                    tuple(targets),
+                )
+                for row in rows:
+                    job = json.loads(row["document"])
+                    investigations.append(
+                        sanitize(
+                            {
+                                "id": job["id"],
+                                "incident": job["incident_ref"],
+                                "session_id": job["session_id"],
+                                "status": job["status"],
+                                "summary": job.get("summary") or job.get("error") or "",
+                                "updated": job["updated"],
+                                "title": row["title"],
+                                "service": targets[row["target"]].name,
+                            }
+                        )
+                    )
     monitor_limit = max((t.interval_seconds for t in targets.values()), default=60) * 3 + 30
     live = bool(heartbeat and now - heartbeat <= monitor_limit)
     monitor = "running" if live else "stale" if heartbeat else "not_started"
@@ -277,6 +306,7 @@ def snapshot(config: Config) -> dict:
         "incidents_limit": 200,
         "queries": sorted(queries, key=lambda q: q["checked"], reverse=True),
         "repairs": repairs,
+        "investigations": investigations,
         "repair_incidents": repair_incidents,
         "automation": {
             "auto_fix": config.repair.enabled and config.repair.auto_fix,

@@ -321,7 +321,6 @@ describe('incident evidence and recorded queries', () => {
   });
 
   it('renders evidence as text, removes unsafe links, and blocks a new repair on stale data', async () => {
-    const user = userEvent.setup();
     const data = snapshotFixture();
     data.monitor.status = 'stale';
     mount(<IncidentsPage />, data);
@@ -335,10 +334,9 @@ describe('incident evidence and recorded queries', () => {
     expect(
       screen.getByText(/Fresh monitor readings are required/),
     ).toBeVisible();
-    await user.click(screen.getByRole('button', { name: 'Copy command' }));
     expect(
-      screen.getByText(/command copied|Copy the displayed command/i),
-    ).toBeVisible();
+      screen.queryByRole('button', { name: 'Copy command' }),
+    ).not.toBeInTheDocument();
     expect(document.querySelector('script')).toBeNull();
   });
 

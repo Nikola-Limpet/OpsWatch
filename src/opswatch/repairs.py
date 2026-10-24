@@ -347,7 +347,7 @@ class RepairWorker:
                 important = self.config.telegram.notifications == "important"
                 terminal = job["status"] in {"pr_open", "blocked", "interrupted", "cancelled"}
                 if not important or job.get("requested_by") != "automatic" or terminal:
-                    await bot.send(text_message(repair_message(job)), repair_markup(job))
+                    await bot.send(text_message(repair_message(job)), repair_markup(job, self.config))
                 with self.store.db:
                     self.store.db.execute(
                         "UPDATE repair_jobs SET notified=? WHERE id=?",

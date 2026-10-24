@@ -194,7 +194,7 @@ class Telegram:
                         raise ValueError("Use /fix OW-0001 or /fix OW-0001 REPOSITORY_ID. See /repos.")
                     job = jobs.enqueue(parts[0], user, parts[1] if len(parts) == 2 else None)
                     reply = repair_message(job)
-                    markup = repair_markup(job)
+                    markup = repair_markup(job, self.config)
                     if time.time() - self.store.get("repair_heartbeat", 0) > 30:
                         reply += "\n\nRepair worker is offline; this request is saved and waiting."
                 elif command == "/repos":
@@ -222,10 +222,10 @@ class Telegram:
                 elif command == "/cancelfix":
                     job = jobs.cancel(argument.strip())
                     reply = repair_message(job)
-                    markup = repair_markup(job)
+                    markup = repair_markup(job, self.config)
                 else:
                     job = jobs.get(argument.strip())
-                    markup = repair_markup(job) if job else None
+                    markup = repair_markup(job, self.config) if job else None
                     reply = repair_message(job) if job else "Use /repair RF-0001; find IDs with /repairs."
             except ValueError as error:
                 reply = str(error)

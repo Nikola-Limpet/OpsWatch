@@ -53,7 +53,7 @@ const pages = {
   },
   '/agents': {
     title: 'Agent work',
-    subtitle: 'Follow each fix, from investigation to a draft PR.',
+    subtitle: 'Follow investigations, findings, and code repairs.',
     eyebrow: 'REPAIR WORKER',
   },
   '/queries': {
@@ -87,11 +87,19 @@ function healthFor(data: Snapshot, failed: boolean) {
         .filter((item) => item.status === 'open' && item.kind === 'monitoring')
         .map((item) => item.target),
     ).size,
-    active: data.repairs.filter((job) => jobPresentation(job).active).length,
+    active:
+      data.repairs.filter((job) => jobPresentation(job).active).length +
+      (data.investigations || []).filter((job) =>
+        ['queued', 'running'].includes(job.status),
+      ).length,
     review: data.repairs.filter((job) => job.status === 'pr_open').length,
-    blocked: data.repairs.filter((job) =>
-      ['blocked', 'interrupted'].includes(job.status),
-    ).length,
+    blocked:
+      data.repairs.filter((job) =>
+        ['blocked', 'interrupted'].includes(job.status),
+      ).length +
+      (data.investigations || []).filter((job) =>
+        ['failed', 'interrupted'].includes(job.status),
+      ).length,
     worker: fresh ? data.repair_worker?.status || 'unverified' : 'unverified',
   };
 }
@@ -421,7 +429,16 @@ function Shell() {
               OpsWatch<span className="footer-divider">/</span>Local monitoring,
               clear evidence.
             </span>
-            <span className="footer-meta"><a href="/assets/THIRD-PARTY-LICENSES.txt" target="_blank" rel="noopener noreferrer">Open-source licenses</a><span>{data?.timezone.replaceAll('_', ' ')}</span></span>
+            <span className="footer-meta">
+              <a
+                href="/assets/THIRD-PARTY-LICENSES.txt"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Open-source licenses
+              </a>
+              <span>{data?.timezone.replaceAll('_', ' ')}</span>
+            </span>
           </footer>
         </main>
       </div>

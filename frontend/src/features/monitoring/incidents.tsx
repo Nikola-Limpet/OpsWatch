@@ -5,7 +5,6 @@ import {
   ArrowLeft,
   ArrowRight,
   ChevronRight,
-  Copy,
   Search,
 } from 'lucide-react';
 import { action, request, useSnapshot } from '../../api';
@@ -21,6 +20,7 @@ import {
   timestamp,
 } from '../../components';
 import type { Incident, Repair, Snapshot } from '../../types';
+import { IncidentAgent, investigationActive } from './incident-agent';
 
 type IncidentGroup = { id: string; items: Incident[] };
 function groupsFor(items: Incident[], data: Snapshot): IncidentGroup[] {
@@ -75,7 +75,6 @@ export function IncidentsPage({ initialRef }: { initialRef?: string } = {}) {
   const [pinned, setPinned] = useState(Boolean(initialRef));
   const [mobileDetail, setMobileDetail] = useState(Boolean(initialRef));
   const [limit, setLimit] = useState(30);
-  const [copyFeedback, setCopyFeedback] = useState('');
   const latestJobs = useMemo(() => {
     const latest = new Map<string, Repair>();
     for (const job of data?.repairs || [])
@@ -93,13 +92,26 @@ export function IncidentsPage({ initialRef }: { initialRef?: string } = {}) {
         (item) =>
           (filter === 'all' ||
             (filter === 'active'
-              ? jobPresentation(latestJobs.get(item.ref)).active
+              ? jobPresentation(latestJobs.get(item.ref)).active ||
+                Boolean(
+                  data?.investigations?.some(
+                    (job) =>
+                      job.incident === item.ref && investigationActive(job),
+                  ),
+                )
               : item.status === filter)) &&
           `${item.ref} ${item.title} ${services.get(item.target)?.name || item.target} ${item.kind}`
             .toLowerCase()
             .includes(search.trim().toLowerCase()),
       ),
-    [data?.incidents, filter, search, latestJobs, services],
+    [
+      data?.incidents,
+      data?.investigations,
+      filter,
+      search,
+      latestJobs,
+      services,
+    ],
   );
   const groups = useMemo(
     () => (data ? groupsFor(filtered, data) : []),
@@ -130,7 +142,6 @@ export function IncidentsPage({ initialRef }: { initialRef?: string } = {}) {
     setSelectedRef(ref);
     setPinned(!filtered.some((incident) => incident.ref === ref));
     setMobileDetail(true);
-    setCopyFeedback('');
   };
   const changeFilter = (value: string) => {
     setFilter(value);
@@ -138,14 +149,6 @@ export function IncidentsPage({ initialRef }: { initialRef?: string } = {}) {
     setPinned(false);
     setMobileDetail(false);
     setLimit(30);
-  };
-  const copyCommand = async (command: string) => {
-    try {
-      await navigator.clipboard.writeText(command);
-      setCopyFeedback('Diagnosis command copied');
-    } catch {
-      setCopyFeedback('Copy the displayed command and send it to Hermes.');
-    }
   };
   if (!data) return null;
   const openCount = data.incidents.filter(
@@ -155,7 +158,13 @@ export function IncidentsPage({ initialRef }: { initialRef?: string } = {}) {
     (incident) => incident.status === 'resolved',
   ).length;
   const activeCount = data.incidents.filter(
-    (incident) => jobPresentation(latestJobs.get(incident.ref)).active,
+    (incident) =>
+      jobPresentation(latestJobs.get(incident.ref)).active ||
+      Boolean(
+        data.investigations?.some(
+          (job) => job.incident === incident.ref && investigationActive(job),
+        ),
+      ),
   ).length;
   return (
     <section
@@ -331,13 +340,7 @@ export function IncidentsPage({ initialRef }: { initialRef?: string } = {}) {
                   group.items.some((candidate) => candidate.ref === item.ref),
                 )}
                 onSelect={select}
-                onCopy={copyCommand}
               />
-              {copyFeedback ? (
-                <p className="copy-feedback" role="status">
-                  {copyFeedback}
-                </p>
-              ) : null}
             </>
           ) : older.isFetching ? (
             <div className="loading" role="status">
@@ -371,14 +374,12 @@ function IncidentDetail({
   failed,
   group,
   onSelect,
-  onCopy,
 }: {
   item: Incident;
   data: Snapshot;
   failed: boolean;
   group?: IncidentGroup;
   onSelect(ref: string): void;
-  onCopy(command: string): void;
 }) {
   const service = data.services.find(
     (candidate) => candidate.id === item.target,
@@ -389,7 +390,6 @@ function IncidentDetail({
   delete evidence.recovery;
   const lead =
     evidence.error || evidence.message || evidence.exception || evidence.reason;
-  const command = `/diagnose ${item.ref}`;
   return (
     <>
       <div className="detail-topline">
@@ -460,6 +460,16 @@ function IncidentDetail({
           </div>
         </section>
       ) : null}
+      {item.repair?.available ||
+      data.repairs.some((job) => job.incident === item.ref) ? (
+        <RepairDetails item={item} data={data} failed={failed} />
+      ) : null}
+      <IncidentAgent
+        item={item}
+        data={data}
+        failed={failed}
+        hasEvidence={Boolean(originalEvidence(item))}
+      />
       <section className="detail-section evidence-section">
         <div className="section-heading">
           <h3>{recovery ? 'Failure evidence' : 'Recorded evidence'}</h3>
@@ -484,25 +494,18 @@ function IncidentDetail({
       </section>
       <section className="detail-section">
         <h3>Recommended next step</h3>
-        <p>{item.next_step || 'Review the recorded evidence.'}</p>
+        <p>
+          {(item.next_step || 'Review the recorded evidence.')
+            .replace(
+              /(?:Use|Run|Send)\s+\/(?:diagnose|fix|incident)\b(?:\s+OW-[0-9]+)?/gi,
+              'Start an agent investigation',
+            )
+            .trim()}
+        </p>
         {item.action && item.action !== 'No action taken' ? (
           <p>Recorded action: {item.action}</p>
         ) : null}
-        <div className="detail-command">
-          <code>{command}</code>
-          <button
-            className="button button-compact"
-            onClick={() => onCopy(command)}
-          >
-            <Copy size={13} aria-hidden="true" />
-            Copy command
-          </button>
-        </div>
-        <p className="detail-note">
-          Send this command to your Hermes Telegram bot for a diagnosis.
-        </p>
       </section>
-      <RepairDetails item={item} data={data} failed={failed} />
       <div className="detail-links">
         {(item.links || []).map((link) => (
           <External key={link.url} href={link.url}>
@@ -557,7 +560,7 @@ function RepairDetails({
     : !fresh
       ? 'Fresh monitor readings are required before starting a new fix. Refresh after monitoring reconnects.'
       : !originalEvidence(item)
-        ? 'The original failure evidence is unavailable. Use Hermes to inspect provider logs before requesting a repair.'
+        ? 'The original failure evidence is unavailable. Wait for a new recorded failure before requesting a repair.'
         : item.status !== 'open'
           ? 'This incident is no longer open. Review its recorded outcome before requesting further work.'
           : item.repair?.available

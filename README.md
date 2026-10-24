@@ -122,7 +122,11 @@ systemctl --user daemon-reload
 systemctl --user enable --now opswatch-repairs
 ```
 
-Start a manual attempt from incident details, Telegram, or the CLI:
+Start an investigation or code repair directly from incident details in the dashboard. Investigations keep their evidence, progress, and findings in Agent Studio and Agent work. Configuration and security incidents can be investigated without a repository mapping; mapped code repairs run in isolated worktrees and prepare draft PRs.
+
+Telegram primarily delivers incident, recovery, and repair-progress notifications with links back to the dashboard. Set `telegram.dashboard_url` or `OPSWATCH_RELAY_URL` for those links. Interactive Telegram buttons are optional through `telegram.interactive_controls: true`.
+
+The CLI is also available:
 
 ```sh
 uv run opswatch fix OW-0001 --repo your-repository-id
@@ -181,7 +185,7 @@ Relay history pages are temporary transport results; durable sessions, reports, 
 local. Completed read results expire after ten minutes, while mutation receipts retain their
 idempotency guarantees.
 
-## Telegram commands
+## Optional Telegram commands
 
 When the Hermes integration is configured:
 

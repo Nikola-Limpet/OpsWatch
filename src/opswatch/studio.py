@@ -499,6 +499,8 @@ def _trim_prompt(private):
             return "preference " + key
     for key in ("checks", "incidents", "projects"):
         if context[key]:
+            if key == "incidents" and context[key][-1]["ref"] == context.get("selected_incident_ref"):
+                continue
             context[key].pop()
             return "context " + key
     if context["services"]:
@@ -761,6 +763,41 @@ class Studio:
         _save(self.db, "studio_sessions", session)
         return session
 
+    def _incident_investigate(self, ref):
+        item = self.store.incident(ref)
+        config = _scope_config(self.config)
+        target = next((t for t in config.targets if item and t.id == item["target"] and t.enabled), None)
+        if not target:
+            raise ValueError("This incident or its monitored service is no longer available.")
+        evidence = {key: value for key, value in item["evidence"].items() if key != "recovery"}
+        if not evidence or set(evidence) == {"quiet_seconds"}:
+            raise ValueError("Original failure evidence is unavailable for this incident.")
+        row = self.db.execute(
+            "SELECT document FROM studio_jobs WHERE status IN ('queued','running') "
+            "AND json_extract(document,'$.incident_ref')=? ORDER BY sequence DESC LIMIT 1",
+            (ref,),
+        ).fetchone()
+        if row:
+            job = json.loads(row[0])
+            return {"session": self._get("sessions", job["session_id"], "Session"), "job": job}
+        session = self._session_create(
+            {
+                "title": (ref + " · " + item["title"])[:120],
+                "role": "chat",
+                "playbook": "investigation",
+                "scope": {"kind": "service", "id": target.id},
+            }
+        )
+        session["incident_ref"] = ref
+        _save(self.db, "studio_sessions", session)
+        return self._enqueue(
+            session,
+            f"Investigate incident {ref}. Identify its likely cause and a focused fix from the recorded "
+            "evidence. Explain verification and any access or configuration required. "
+            "Do not claim to have applied changes. Save the findings in this conversation.",
+            incident=item,
+        )
+
     def _session_read(self, payload):
         session = self._get("sessions", payload["session_id"], "Session")
         ceiling = 2**63 - 1
@@ -912,7 +949,7 @@ class Studio:
             feedback.append(value)
         return feedback, existing, {"feedback": feedback_count, "existing_problems": existing_count}
 
-    def _enqueue(self, session, content, report_options=None, source_report=None):
+    def _enqueue(self, session, content, report_options=None, source_report=None, incident=None):
         if session["archived"]:
             raise ValueError("Restore the archived session before sending a message.")
         if session["active_job_id"]:
@@ -935,10 +972,48 @@ class Studio:
             start = options.get("window_start", end - (7 if options["period"] == "week" else 1) * 86400)
             window = (start, end)
         current_config = _scope_config(self.config)
+        if session.get("incident_ref"):
+            incident = self.store.incident(session["incident_ref"])
+            if not incident or not any(
+                t.enabled and t.id == incident["target"] for t in current_config.targets
+            ):
+                raise ValueError("The incident or its monitored service is no longer available.")
         context = _context(self.config, self.db, session["scope"], window, current_config=current_config)
         playbook = session.get(
             "playbook", "reflection" if session["role"] == "improvement" else "investigation"
         )
+        if incident:
+            # The selected incident must survive the ordinary recent-context limit.
+            pinned = _clean(incident)
+            encoded_evidence = _json(pinned["evidence"]).encode()
+            truncated = len(encoded_evidence) > 20000
+            if truncated:
+                pinned["evidence"] = {
+                    "excerpt": encoded_evidence[:20000].decode("utf-8", errors="ignore"),
+                    "notice": "Evidence excerpt only. Complete evidence remains in the dashboard.",
+                }
+            context["selected_incident_ref"] = incident["ref"]
+            context["coverage"]["selected_incident"] = {
+                "ref": incident["ref"],
+                "evidence_truncated": truncated,
+                "original_evidence_bytes": len(encoded_evidence),
+            }
+            context["incidents"] = [pinned] + [
+                item for item in context["incidents"] if item["ref"] != incident["ref"]
+            ]
+            context["sources"] = [source for source in context["sources"] if source["id"] != incident["ref"]]
+            targets = _select_targets(current_config, session["scope"])
+            context["sources"].insert(
+                0,
+                {
+                    "kind": "incident",
+                    "id": incident["ref"],
+                    "label": incident["title"],
+                    "observed_at": incident["updated"],
+                    "stale": time.time() - incident["updated"]
+                    > max(t.interval_seconds for t in targets) * 3 + 30,
+                },
+            )
         context["pstack"] = _workflow_metadata(playbook)
         preferences = _preferences(self.db)
         history = [
@@ -997,6 +1072,8 @@ class Studio:
             "preference_revision": preferences["revision"],
             "problem_ids": [],
         }
+        if session.get("incident_ref"):
+            job["incident_ref"] = session["incident_ref"]
         private = {
             "question": content,
             "context": context,
@@ -1048,6 +1125,8 @@ class Studio:
         return {"session": session, "message": assistant, "job": job} | ({"report": report} if report else {})
 
     def _perform(self, action, payload):
+        if action == "incident_investigate":
+            return self._incident_investigate(payload["incident_ref"])
         if action == "session_create":
             return {"session": self._session_create(payload)}
         if action == "session_read":
@@ -1130,6 +1209,8 @@ class Studio:
             return
         job = current
         job.update(status=status, updated=now, finished=now, error=_clean(error))
+        if job.get("incident_ref"):
+            job["summary"] = _clean((content or error or status)[:1200])
         if problems:
             for problem in problems:
                 _save(self.db, "studio_problems", problem)
@@ -1274,7 +1355,9 @@ class StudioWorker:
     async def _execute(self, studio, job, private):
         run_id, task = None, None
         try:
-            _scope_targets(self.config, private["context"]["scope"])
+            selected = _scope_targets(self.config, private["context"]["scope"])
+            if job.get("incident_ref") and not any(t.enabled for t in selected):
+                raise ValueError("The incident service is no longer monitored.")
             private = _bounded_private(job["kind"], private)
             with studio.db:
                 studio.db.execute("UPDATE studio_jobs SET private=? WHERE id=?", (_json(private), job["id"]))

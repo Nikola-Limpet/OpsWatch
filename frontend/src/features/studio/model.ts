@@ -179,6 +179,7 @@ export interface StudioOverview {
     last_cycle: number | null;
     active_job_id: string | null;
     queued: number;
+    budget?: { limit: number; used: number; available: number; next_available_at: number | null };
   };
   context: StudioContext;
   counts: Record<string, number>;

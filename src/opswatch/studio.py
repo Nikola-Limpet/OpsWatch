@@ -111,6 +111,33 @@ def _state(db, key, default=None):
     return json.loads(row[0]) if row else default
 
 
+HOURLY_LIMIT = "Hourly agent limit reached. Recorded evidence remains available."
+
+
+class AgentBudgetExhausted(ValueError):
+    def __init__(self, budget):
+        super().__init__(HOURLY_LIMIT)
+        self.budget = budget
+
+
+def _agent_budget(config, db):
+    now = time.time()
+    runs = (
+        db.execute(
+            "SELECT created FROM agent_runs WHERE created>? ORDER BY created", (now - 3600,)
+        ).fetchall()
+        if db is not None and _exists(db, "agent_runs")
+        else []
+    )
+    used, limit = len(runs), config.agent.max_per_hour
+    return {
+        "limit": limit,
+        "used": used,
+        "available": max(0, limit - used),
+        "next_available_at": runs[used - limit][0] + 3600 if used >= limit else None,
+    }
+
+
 def default_preferences() -> dict:
     return {
         "revision": 1,
@@ -614,7 +641,13 @@ def _overview(config, db) -> dict:
         "reports": [],
         "problems": [],
         "preferences": _preferences(db),
-        "worker": {"status": "not_started", "last_cycle": None, "active_job_id": None, "queued": 0},
+        "worker": {
+            "status": "not_started",
+            "last_cycle": None,
+            "active_job_id": None,
+            "queued": 0,
+            "budget": _agent_budget(config, db),
+        },
         "context": context,
         "counts": {"sessions": 0, "reports": 0, "problems": 0, "feedback": 0},
         "has_more": {"sessions": False, "reports": False, "problems": False},
@@ -653,6 +686,7 @@ def _overview(config, db) -> dict:
         "last_cycle": heartbeat,
         "active_job_id": running[0] if running else None,
         "queued": queued,
+        "budget": _agent_budget(config, db),
     }
     while len(json.dumps(result).encode()) > 524288:
         collection = max(("sessions", "reports", "problems"), key=lambda key: len(json.dumps(result[key])))
@@ -1254,19 +1288,118 @@ class StudioWorker:
                 error="The worker stopped during this job. Submit a new request to retry.",
             )
 
+    def _wait_for_budget(self, studio, job, budget):
+        from .formatting import stamp
+
+        retry_at = budget["next_available_at"]
+        if job["status"] == "queued" and job.get("retry_at") == retry_at:
+            return
+        now = time.time()
+        text = (
+            "Waiting for the hourly agent budget. This request resumes automatically after "
+            + stamp(retry_at, self.config.timezone)
+            + "."
+        )
+        job.update(
+            status="queued",
+            updated=now,
+            started=None,
+            finished=None,
+            error=None,
+            wait_reason="hourly_limit",
+            retry_at=retry_at,
+        )
+        if job.get("incident_ref"):
+            job["summary"] = text
+        _job_save(studio.db, job)
+        message = studio._get("messages", job["message_id"], "Assistant message")
+        message.update(status="queued", content=text, updated=now)
+        _save(studio.db, "studio_messages", message)
+        session = studio._get("sessions", job["session_id"], "Session")
+        session.update(updated=now, active_job_id=job["id"], last_message=text)
+        _save(studio.db, "studio_sessions", session)
+        if job["report_id"]:
+            report = studio._get("reports", job["report_id"], "Report")
+            report.update(status="queued", updated=now, error=None)
+            _save(studio.db, "studio_reports", report)
+
+    def _recover_budget_failures(self, studio):
+        # Earlier versions failed before inference at the quota boundary. Resume those
+        # exact requests, without retrying provider failures or archived conversations.
+        rows = studio.db.execute(
+            "SELECT document FROM studio_jobs WHERE status='failed' ORDER BY sequence DESC"
+        ).fetchall()
+        for row in rows:
+            job = json.loads(row[0])
+            if job.get("error") != "Agent execution failed. " + HOURLY_LIMIT:
+                continue
+            session = studio._get("sessions", job["session_id"], "Session")
+            if session["archived"]:
+                continue
+            newer = studio.db.execute(
+                "SELECT document FROM studio_jobs WHERE id!=? "
+                "AND status IN ('queued','running','succeeded') AND created>=? "
+                "AND (json_extract(document,'$.session_id')=? OR "
+                "(? IS NOT NULL AND json_extract(document,'$.incident_ref')=?)) LIMIT 1",
+                (
+                    job["id"],
+                    job["created"],
+                    job["session_id"],
+                    job.get("incident_ref"),
+                    job.get("incident_ref"),
+                ),
+            ).fetchone()
+            if newer:
+                text = (
+                    "A newer saved request already covers this investigation. No duplicate run was started."
+                )
+                job.update(status="cancelled", error=None, summary=text, updated=time.time())
+                _job_save(studio.db, job)
+                message = studio._get("messages", job["message_id"], "Assistant message")
+                message.update(status="cancelled", content=text, updated=time.time())
+                _save(studio.db, "studio_messages", message)
+                if job["report_id"]:
+                    report = studio._get("reports", job["report_id"], "Report")
+                    report.update(status="cancelled", error=None, updated=time.time())
+                    _save(studio.db, "studio_reports", report)
+                if not session["active_job_id"]:
+                    session.update(last_message=text, updated=time.time())
+                    _save(studio.db, "studio_sessions", session)
+                continue
+            # The next claim reserves real capacity; recovery never spends it itself.
+            budget = _agent_budget(self.config, studio.db)
+            budget["next_available_at"] = budget["next_available_at"] or time.time()
+            self._wait_for_budget(studio, job, budget)
+            studio.db.execute(
+                "INSERT INTO audit(created,target,action,detail) VALUES (?,?,?,?)",
+                (time.time(), "worker", "agent_budget_request_restored", _json({"job_id": job["id"]})),
+            )
+
     def _claim(self, studio):
         studio.db.execute("BEGIN IMMEDIATE")
         try:
             self._recover(studio)
+            self._recover_budget_failures(studio)
+            budget = _agent_budget(self.config, studio.db)
+            if not budget["available"]:
+                for queued in studio.db.execute(
+                    "SELECT document FROM studio_jobs WHERE status='queued'"
+                ).fetchall():
+                    self._wait_for_budget(studio, json.loads(queued[0]), budget)
+                studio.db.commit()
+                return None
             row = studio.db.execute(
                 "SELECT document,private FROM studio_jobs WHERE status='queued' ORDER BY sequence LIMIT 1"
             ).fetchone()
             if row:
                 job, private = json.loads(row[0]), json.loads(row[1])
                 job.update(status="running", updated=time.time(), started=time.time())
+                job.pop("retry_at", None)
+                job.pop("wait_reason", None)
+                job.pop("summary", None)
                 _job_save(studio.db, job)
                 message = studio._get("messages", job["message_id"], "Assistant message")
-                message.update(status="running", updated=time.time())
+                message.update(status="running", content="", updated=time.time())
                 _save(studio.db, "studio_messages", message)
                 if job["report_id"]:
                     report = studio._get("reports", job["report_id"], "Report")
@@ -1281,11 +1414,9 @@ class StudioWorker:
     def _reserve(self, studio):
         studio.db.execute("BEGIN IMMEDIATE")
         try:
-            used = studio.db.execute(
-                "SELECT count(*) FROM agent_runs WHERE created>?", (time.time() - 3600,)
-            ).fetchone()[0]
-            if used >= self.config.agent.max_per_hour:
-                raise ValueError("Hourly agent limit reached. Recorded evidence remains available.")
+            budget = _agent_budget(self.config, studio.db)
+            if not budget["available"]:
+                raise AgentBudgetExhausted(budget)
             cursor = studio.db.execute(
                 "INSERT INTO agent_runs(created,backend,model,response) VALUES (?,?,?,?)",
                 (time.time(), self.config.agent.backend, Agent(self.config, studio.store).model(), "pending"),
@@ -1401,6 +1532,12 @@ class StudioWorker:
                 if run_id:
                     studio.db.execute("UPDATE agent_runs SET response=? WHERE id=?", ("interrupted", run_id))
             raise
+        except AgentBudgetExhausted as error:
+            studio.db.execute("BEGIN IMMEDIATE")
+            with studio.db:
+                current = studio._get("jobs", job["id"], "Agent job")
+                if current["status"] == "running":
+                    self._wait_for_budget(studio, current, error.budget)
         except Exception as error:
             detail = "Agent execution failed. " + redact_text(str(error) or type(error).__name__, 1000)
             with studio.db:

@@ -298,8 +298,9 @@ async def test_unavailable_provider_and_hourly_budget_fail_honestly(workspace, m
     second = action(studio, "report_create")
     await module.StudioWorker(config).run_once()
     read = action(studio, "session_read", {"session_id": second["session"]["id"]})
-    assert read["jobs"][0]["status"] == "failed"
-    assert "limit" in read["jobs"][0]["error"].lower()
+    assert read["jobs"][0]["status"] == "queued"
+    assert read["jobs"][0]["error"] is None
+    assert read["jobs"][0]["wait_reason"] == "hourly_limit"
     assert store.db.execute("SELECT count(*) FROM agent_runs").fetchone()[0] == 1
 
 

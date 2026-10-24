@@ -239,6 +239,8 @@ The bundled Geist fonts retain their [original license](src/opswatch/dashboard_a
 
 ## Practical limits
 
+Agent diagnoses and Studio jobs share the configured `agent.max_per_hour` budget, which defaults to six runs per rolling hour. Studio requests wait in the saved queue when it is used and resume automatically when capacity returns. Failed provider attempts still count toward the budget. Increasing the limit permits more model calls.
+
 Monitoring stops when the machine running it sleeps, disconnects, or shuts down. Use an always-on host and an external missing-heartbeat alert if continuous coverage matters. Provider polling and bounded log windows cannot guarantee capture of every event on busy applications.
 
 A quiet error stream means matching events stopped; it does not prove a code defect was fixed. A draft PR means a change is ready for review; it does not prove production recovery. Historical evidence that was never retained cannot be reconstructed by the dashboard.

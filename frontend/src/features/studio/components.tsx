@@ -189,12 +189,15 @@ export function WorkerState({ worker }: { worker: StudioOverview["worker"] }) {
   return (
     <span
       className={`studio-worker studio-worker-${worker.status}`}
-      title={`Last cycle: ${formatTime(worker.last_cycle)}`}
+      title={`Last cycle: ${formatTime(worker.last_cycle)}${worker.budget?.next_available_at ? `. Budget resumes ${formatTime(worker.budget.next_available_at)}` : ""}`}
     >
       <span className="studio-state-dot" />
       {labels[worker.status]}
       {worker.queued > 0 ? (
         <span className="muted"> · {worker.queued} queued</span>
+      ) : null}
+      {worker.budget?.available === 0 ? (
+        <span className="muted"> · {worker.budget.used}/{worker.budget.limit} hourly runs used</span>
       ) : null}
     </span>
   );

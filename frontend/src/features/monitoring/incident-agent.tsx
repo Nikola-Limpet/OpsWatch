@@ -99,7 +99,9 @@ export function IncidentAgent({
       </div>
       <p>
         {job?.summary ||
-          (active
+          (job?.status === 'succeeded'
+            ? 'Investigation complete. Open the saved findings below.'
+            : active
             ? 'The local agent will save its findings here and in Agent Studio. You can leave this page while it works.'
             : 'Start an agent with this incident’s evidence. It will investigate the cause and save a proposed fix and verification steps in the dashboard.')}
       </p>

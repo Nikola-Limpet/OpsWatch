@@ -180,3 +180,13 @@ def test_historical_missing_next_step_has_dashboard_guidance():
     from opswatch.formatting import next_step_text
 
     assert next_step_text(None) == "Review the recorded evidence."
+
+
+def test_legacy_next_step_routes_bare_commands_to_dashboard_actions():
+    from opswatch.formatting import next_step_text
+
+    assert next_step_text("Review evidence with /diagnose.") == "Review evidence with an agent investigation."
+    assert (
+        next_step_text("Use /diagnose to review indexes.")
+        == "Start an agent investigation to review indexes."
+    )

@@ -85,14 +85,15 @@ def dashboard_link(config: Config, path: str) -> str | None:
 
 
 def next_step_text(value: str | None) -> str:
-    labels = {
+    nouns = {"diagnose": "an agent investigation", "fix": "a code repair", "incident": "incident evidence"}
+    actions = {
         "diagnose": "Start an agent investigation",
         "fix": "Start a code repair",
         "incident": "Review incident evidence",
     }
     return re.sub(
-        r"(?:Use|Run|Send)\s+/(diagnose|fix|incident)\b(?:\s+OW-[0-9]+)?",
-        lambda match: labels[match[1].lower()],
+        r"(?:(Use|Run|Send)\s+)?/(diagnose|fix|incident)\b(?:\s+OW-[0-9]+)?",
+        lambda match: (actions if match[1] else nouns)[match[2].lower()],
         value or "Review the recorded evidence.",
         flags=re.I,
     ).strip()
